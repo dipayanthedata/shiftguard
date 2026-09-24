@@ -1,0 +1,1 @@
+{"version":3,"file":"shiftguard-stack.d.ts","sourceRoot":"","sources":["shiftguard-stack.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,GAAG,MAAM,aAAa,CAAC;AASnC,OAAO,EAAE,SAAS,EAAE,MAAM,YAAY,CAAC;AAEvC,qBAAa,eAAgB,SAAQ,GAAG,CAAC,KAAK;IAC5C,YAAY,KAAK,EAAE,SAAS,EAAE,EAAE,EAAE,MAAM,EAAE,KAAK,CAAC,EAAE,GAAG,CAAC,UAAU,EAkI/D;CACF"}

@@ -3,7 +3,6 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
-import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as budgets from 'aws-cdk-lib/aws-budgets';
 import * as iam from 'aws-cdk-lib/aws-iam';
@@ -25,10 +24,22 @@ export class ShiftGuardStack extends cdk.Stack {
     });
 
     // Lambda Function URL for /api/health
-    const healthHandler = new nodejs.NodejsFunction(this, 'HealthHandler', {
-      entry: 'lambda/health/handler.ts',
-      handler: 'handler',
+    const healthHandler = new lambda.Function(this, 'HealthHandler', {
       runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromInline(`
+exports.handler = async (event) => {
+  return {
+    statusCode: 200,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ok: true,
+      version: '0.0.1',
+      timestamp: new Date().toISOString(),
+    }),
+  };
+};
+      `),
       memorySize: 128,
       timeout: cdk.Duration.seconds(30),
     });
@@ -39,7 +50,6 @@ export class ShiftGuardStack extends cdk.Stack {
         allowedMethods: [lambda.HttpMethod.GET, lambda.HttpMethod.POST],
         allowedHeaders: ['Content-Type'],
       },
-      qualifier: undefined,
       authType: lambda.FunctionUrlAuthType.NONE,
     });
 
@@ -60,17 +70,10 @@ export class ShiftGuardStack extends cdk.Stack {
       pointInTimeRecovery: false,
     });
 
-    // CloudFront Origin Access Control for S3
-    const oac = new cloudfront.OriginAccessControl(this, 'S3OAC', {
-      originAccessControlName: 'ShiftGuardS3OAC',
-    });
-
     // CloudFront distribution with two behaviors
     const distribution = new cloudfront.Distribution(this, 'Distribution', {
       defaultBehavior: {
-        origin: new origins.S3Origin(bucket, {
-          originAccessControl: oac,
-        }),
+        origin: new origins.S3Origin(bucket),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
         compress: true,
@@ -81,10 +84,7 @@ export class ShiftGuardStack extends cdk.Stack {
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
           cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
           allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-          forwardedValues: {
-            queryString: true,
-            headers: ['*'],
-          },
+          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
         },
       },
       priceClass: cloudfront.PriceClass.PRICE_CLASS_100,

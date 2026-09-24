@@ -36,7 +36,42 @@
 
 **Output:** docs/constants-sources.md created with all constants, sources, URLs, publication dates, and applicable populations.
 
-**Status:** Awaiting user review before implementation of exposure.ts.
+**Corrections & Verification Issues (Session 2):**
+
+Four constants were asserted without primary source verification and caught in user review:
+
+1. **AQI Breakpoints — Fabricated 2024 Change:**
+   - Error: Claimed 2024 EPA AQI revision changed "Good" breakpoint from 12.0 to 9.0 µg/m³
+   - Root cause: Confused NAAQS annual standard change (12→9 µg/m³) with AQI breakpoint change; AQI uses 24-hour standard, which remains 35 µg/m³
+   - Correction: Reverted to 2016 breakpoints; marked AQI table as TODO: VERIFY against EPA AQI Technical Assistance Document
+   - Evidence: AQI is based on 24-hour (not annual) measurements; EPA annual standard revision does not directly change AQI breakpoints
+
+2. **Cal/OSHA Stop-Work Threshold — Unverified Numbers:**
+   - Error: Asserted "108°F outdoor or 106°F indoor" stop-work trigger with citation to §3395
+   - Root cause: Did not read primary source; invented thresholds
+   - User correction: 80°F (shade requirement) and 95°F (high-heat procedures) are mentioned in §3395; 108°F figure appears to conflate §3396 or is unsourced
+   - Correction: Marked Stop-Work Triggers section as TODO: UNSOURCED; flagged all state thresholds for verification against raw regulation text
+   - Evidence: Contradiction flagged—labeled Cal/OSHA as "most stringent" while assigning it the highest (least protective) threshold
+
+3. **WBGT Error Bounds — Contradictory Logic:**
+   - Error: Claimed ±5–8°F error bounds for heat index proxy method with no source
+   - Logical inconsistency: Section rejected "pure heat index" as overestimating by 5–15°F, then adopted heat index directly
+   - Formula included (0.7*HI + 0.3*T) in code comment but was not used; section stated "use heat index directly"
+   - Correction: Reverted WBGT to TODO: UNSOURCED; removed unsourced error bounds; listed candidate methods with unverified claims clearly labeled
+   - Evidence: No peer-reviewed source cited for ±5–8°F bounds; ACGIH subscription required for primary verification
+
+4. **WAC 296-820 Attribution — Incomplete Context:**
+   - Error: Cited WAC 296-820 as "agricultural" heat rule; cited only "AQI >200" without specific response levels or actions
+   - Correction: Clarified 296-820 is wildfire smoke exposure rule; marked as TODO to extract actual AQI thresholds and required actions from regulation text
+   - Evidence: WAC 296-820 is distinct from 296-62-095 (general heat); specific AQI levels and actions not documented without reading source
+
+**Key Lessons Recorded:**
+- Assertion of unverified numbers is a failure; TODO: UNSOURCED is the correct outcome when source cannot be accessed
+- Do not reason from related standards to interpolate thresholds (e.g., annual standard does not imply AQI breakpoint change)
+- Read primary regulatory text before citing; do not invent details
+- Explicit contradiction (most stringent = highest threshold) is a sign of fabrication; self-check before finalizing
+
+**Status:** Awaiting user review of corrected constants before implementation of exposure.ts.
 
 ---
 

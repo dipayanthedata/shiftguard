@@ -49,34 +49,38 @@ const HI_COEFFS = {
 **Background:**
 WBGT is the gold-standard safety metric for outdoor heat stress. It combines dry-bulb temperature, wet-bulb temperature, and globe temperature. However:
 - True WBGT requires specialized equipment (globe thermometer, wetted wick thermometer)
-- No empirically validated regression from heat index alone
-- Multiple approximation methods exist with acknowledged error bounds
+- No empirically validated regression from heat index alone available
+- Multiple approximation methods exist with unverified error bounds
 
 **Candidate Methods (to be evaluated):**
 
 1. **Heat Index Proxy** (conservative but rough)
    - Use heat index as a proxy for work-rest decisions
-   - Error: Ignores solar radiation, wind, direct sun exposure
+   - Limitations: Ignores solar radiation, wind, direct sun exposure
    - Status: Conservative approach; acceptable for initial release
+   - **TODO:** Verify error bounds from peer-reviewed source (current sources cited have no quantified bounds)
 
 2. **Simplified WBGT Approximation (Bernard & Pryor, 1999)**
-   - WBGT ≈ 0.567*T_g + 0.393*T_wb + 0.04*(RH/100) - 1.7*V + 2.0
+   - Formula: WBGT ≈ 0.567*T_g + 0.393*T_wb + 0.04*(RH/100) - 1.7*V + 2.0
    - Requires: globe temp (not available), wet-bulb (not available), wind speed (V)
    - Status: Cannot implement without additional sensors
 
 3. **Heat Index to WBGT Mapping (ACGIH)**
-   - Rough empirical relationship: WBGT ≈ HI - 5 to 10°F (varies by conditions)
-   - Error: ±5–15°F depending on solar exposure, wind
-   - Status: Placeholder approximation with acknowledged margin
+   - Empirical relationship cited: WBGT ≈ HI - 5 to 10°F (varies by conditions)
+   - Error: Unverified; ACGIH source requires subscription
+   - Status: Placeholder with acknowledged uncertainty
+   - **TODO:** Access ACGIH primary source to verify
 
-**Decision Point:** 
-- **Conservative approach for v0:** Use heat index directly for work-rest decisions; document that this is a heat index-based threshold, NOT true WBGT
-- **Flag:** Code comment: "WBGT approximation from heat index ± 5–10°F; true WBGT requires globe thermometer"
-- **TODO:** Evaluate Bernard & Pryor method if wind speed and humidity sensors become available
+**Decision Pending:**
+- **Recommendation for v0:** Use heat index as conservative proxy
+- **Output requirement:** Briefing MUST label thresholds as "Heat Index-Based Guidance" (NOT "WBGT")
+- **Code comment:** "Work-rest limits use NWS heat index as proxy; true WBGT requires specialized equipment; error bounds unverified"
+- **Next step:** Finalize method and error bounds with user review before implementation
 
-**Recommendations from sources:**
-- ACGIH: https://www.acgih.org/ (TLV for heat stress) — requires subscription; using cited guidelines
-- NIOSH: https://www.cdc.gov/niosh/topics/emf/rfsafety.html (indirect reference to work-rest tables)
+**Candidate Sources (Not Yet Verified):**
+- NIOSH Heat Stress guidance: https://www.cdc.gov/niosh/topics/heatstress/
+- NWS Heat Index: https://www.weather.gov/media/epz/wxcalc/heatIndex.pdf
+- ACGIH Heat Stress TLV: https://www.acgih.org/ (subscription required)
 
 ---
 
@@ -85,9 +89,21 @@ WBGT is the gold-standard safety metric for outdoor heat stress. It combines dry
 **Source:** NIOSH Recommended Exposure Limit (REL) for Heat Stress
 - URL: https://www.cdc.gov/niosh/topics/heatstress/
 - Publication: NIOSH Criteria Document (revised 1986, reaffirmed in guidance)
-- Applicable: Outdoor workers, assumed acclimatized after 2 weeks
+- Applicable: Outdoor workers
+- **Acclimatization Status:** MUST be specified by caller; see two tables below
 
-**NIOSH REL Work-Rest Recommendations (Continuous Exposure, Acclimatized):**
+**Critical Note:**
+Most heat illnesses and fatalities occur in the first 1–2 days of heat exposure (unacclimatized workers). The briefing should default to UNACCLIMATIZED unless explicitly marked otherwise by the supervisor. The exposure engine will compute recommendations for both and surface which was applied.
+
+**Table 1: UNACCLIMATIZED Workers (first 1–2 days of heat exposure — DEFAULT ASSUMPTION):**
+
+| WBGT (°C) | Light Metabolic | Moderate Metabolic | Heavy Metabolic | Very Heavy Metabolic |
+|---|---|---|---|---|
+| 28–29 | 100% work | 100% work | 75% work, 25% rest | 50% work, 50% rest |
+| 30–32 | 100% work | 50% work, 50% rest | 25% work, 75% rest | STOP |
+| ≥33 | STOP | STOP | STOP | STOP |
+
+**Table 2: ACCLIMATIZED Workers (2+ weeks continuous heat exposure):**
 
 | WBGT (°C) | Light Metabolic | Moderate Metabolic | Heavy Metabolic | Very Heavy Metabolic |
 |---|---|---|---|---|
@@ -95,21 +111,17 @@ WBGT is the gold-standard safety metric for outdoor heat stress. It combines dry
 | 32–34 | 100% work | 50% work, 50% rest | 25% work, 75% rest | STOP |
 | ≥35 | STOP | STOP | STOP | STOP |
 
-**Notes:**
-- Metabolic rates (light 100–150 W/m², moderate 150–200, heavy 200–260, very heavy >260)
-- Above assumes acclimated workers; unacclimatized workers use stricter thresholds (shift all rows down ~2°C)
-- Source: CDC/NIOSH Heat Stress guidance
+**Critical Implementation Notes:**
+- **Metabolic workload categories:** Light (100–150 W/m²), Moderate (150–200 W/m²), Heavy (200–260 W/m²), Very Heavy (>260 W/m²)
+- **Default briefing:** UNACCLIMATIZED (Table 1) — most injuries and fatalities occur in the first 1–2 days
+- **Caller input:** Exposure engine MUST accept boolean flag `isAcclimatized` (default: `false`)
+- **Output:** Briefing displays which table was applied; supervisor can override via UI form
+- **Source:** CDC/NIOSH Heat Stress guidance (https://www.cdc.gov/niosh/topics/heatstress/)
 
-**ACGIH TLV (Threshold Limit Value) — differs from NIOSH REL:**
+**ACGIH TLV (Threshold Limit Value) — informational only:**
 - URL: https://www.acgih.org/ (requires subscription)
 - General guidance: ACGIH TLVs are typically more permissive than NIOSH RELs
 - **Conservative approach for this implementation:** Use NIOSH REL values (more protective)
-- TODO: Verify ACGIH 2026 revision once subscription/public version available
-
-**Acclimatization Status:**
-- **Unacclimatized (first 1–2 weeks):** Use ~2°C lower WBGT thresholds
-- **Acclimatized (2+ weeks in heat):** Use table above
-- Assumption for v0: Acclimatized (briefing generated for ongoing crews); TODO: flag unacclimatized in UI
 
 ---
 
@@ -117,10 +129,10 @@ WBGT is the gold-standard safety metric for outdoor heat stress. It combines dry
 
 **Source:** U.S. Environmental Protection Agency AQI Technical Assistance Document
 - URL: https://www.epa.gov/air-quality/air-quality-index-aqi
-- Last updated: 2023 (AQI PM2.5 breakpoints effective 2016 revision)
-- Applicable: 24-hour average or 1-hour peak PM2.5 concentration
+- **Revision Date:** 2016 (current official breakpoints)
+- **Applicable:** 24-hour average PM2.5 concentration
 
-**Current EPA AQI Breakpoints (PM2.5, µg/m³):**
+**EPA AQI Breakpoints (PM2.5, µg/m³) — 2016 Standard (CURRENT):**
 
 | AQI Value | Breakpoint Range | Air Quality | Health Message |
 |---|---|---|---|
@@ -131,8 +143,14 @@ WBGT is the gold-standard safety metric for outdoor heat stress. It combines dry
 | 201–300 | 150.5–250.4 µg/m³ | Very Unhealthy | Health alert: all may be affected |
 | 301+ | ≥250.5 µg/m³ | Hazardous | Health warning of emergency conditions |
 
-**Citation:** https://www.epa.gov/air-quality/air-quality-index-aqi  
-**Technical Document:** https://www.epa.gov/sites/default/files/2021-05/aqi-technical-assistance-document-sept2018.pdf
+**Note on 2024 NAAQS Revision:**
+- EPA revised the PM2.5 NAAQS in March 2024: annual standard tightened from 12 to 9 µg/m³
+- **AQI breakpoints use 24-hour (not annual) averages**; 24-hour standard remains 35 µg/m³ unchanged
+- **TODO: VERIFY** whether AQI Technical Assistance Document has been updated for 2024; current implementation uses 2016 breakpoints
+
+**Citation:** 
+- EPA AQI Technical Document: https://www.epa.gov/air-quality/air-quality-index-aqi
+- NAAQS reference: https://www.epa.gov/air-quality/national-ambient-air-quality-standards-naaqs-pm25
 
 ---
 
@@ -164,34 +182,37 @@ Publication: OSHA Heat Illness Prevention fact sheets (revised 2021)
 
 ## 6. Stop-Work Triggers
 
-**Status:** TODO: UNSOURCED (thresholds pending state/OSHA guidance compilation)
+**Status:** TODO: UNSOURCED (thresholds pending regulatory source verification)
 
-**Framework (OSHA & State-Specific):**
+**Framework — Candidate Thresholds by Authority:**
 
-| Authority | Trigger Condition | Standard |
-|---|---|---|
-| OSHA (Federal Guideline) | WBGT ≥ 35°C (95°F) continuous exposure | Recommended; not mandatory in all states |
-| OSHA Heat Illness Prevention (CA, WA, OR) | Heat Index ≥ 105°F OR Wet Bulb ≥ 32.2°C | Requires shade, water, rest |
-| California OSHA (most stringent) | Heat Index ≥ 108°F outdoor OR 106°F indoor | Mandatory work stoppage or frequent rest breaks |
-| ACGIH TLV | WBGT ≥ 34°C for heavy work | Guidelines; not regulatory |
+| Jurisdiction | Regulatory Standard | Candidate Thresholds | Status |
+|---|---|---|---|
+| **California OSHA** | Title 8 §3395 (Heat Illness Prevention) | 80°F (shade requirement), 95°F (high-heat procedures); exact stop-work threshold TODO | **TODO: Verify exact provisions** |
+| **Washington State** | WAC 296-62-095 (general); WAC 296-820 (wildfire smoke) | TODO: Extract from WAC text; wildfire rule has specific AQI response levels | **TODO: Verify AQI levels in 296-820** |
+| **Oregon** | OAR 437-002-0156 | TODO: Verify exact thresholds | **TODO: Source rule text** |
+| **Federal OSHA** | General Duty Clause (heat illness) | No federal mandatory threshold; guidance defers to state standards | **Guidance only** |
 
-**Conservative Approach for v0:**
+**Current Placeholder (Pending Verification):**
+
+```typescript
+const CAUTION_HEAT_INDEX_F = 95;          // Conservative baseline; CA §3395 reference mentioned
+const SHADE_REQUIRED_HEAT_INDEX_F = 80;   // CA §3395 reference mentioned; TODO: verify
+const STOP_WORK_HEAT_INDEX_F = 105;       // Conservative threshold; WA/OR sources cited; TODO: verify exact wording
 ```
-STOP_WORK_HEAT_INDEX_F = 105  // Moderate threshold; errs protective
-CAUTION_HEAT_INDEX_F = 95      // Increased break frequency
-MANDATORY_REST_BREAK_MINUTES = 10–15 every hour above 95°F
-```
 
-**Rationale:**
-- Uses heat index (available from NWS) rather than WBGT (requires equipment)
-- 105°F aligns with California OSHA thresholds (most protective state guideline)
-- Conservative assumption: unacclimatized workers (briefing is for planning, not ongoing operations)
+**TODO Items (Blocking Implementation):**
+1. **California:** Extract exact thresholds from §3395 and §3396 (indoor); confirm 80°F and 95°F provisions
+2. **Washington:** Read WAC 296-62-095 (general heat) and WAC 296-820 (wildfire smoke) for AQI response levels and actions
+3. **Oregon:** Read OAR 437-002-0156 for exact thresholds and actions
+4. **Default logic:** Select most protective values across states; surface which jurisdiction's rule applies in briefing
 
-**Sources (to verify & cite):**
-- OSHA Heat Illness Prevention: https://www.osha.gov/heat
-- California OSHA Title 8: https://www.dir.ca.gov/title8/
-- Washington State L&I: https://lni.wa.gov/workers-rights/work-conditions/heat/
-- **TODO:** Compile exact Cal/OSHA and state-specific thresholds (currently placeholder)
+**Sources (To Be Read & Cited):**
+- California OSHA Title 8 §3395: https://www.dir.ca.gov/title8/3395.html
+- Washington State WAC 296-62-095: https://app.leg.wa.gov/wac/default.aspx?cite=296-62-095
+- Washington State WAC 296-820: https://app.leg.wa.gov/wac/default.aspx?cite=296-820
+- Oregon OAR 437-002-0156: https://secure.sos.state.or.us/oard/viewSingleRule.action?ruleVsn=11436
+- OSHA Heat Illness Prevention (federal guidance): https://www.osha.gov/heat
 
 ---
 

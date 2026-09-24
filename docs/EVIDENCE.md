@@ -18,6 +18,28 @@
 
 ---
 
+## Session 2: Data Layer & Exposure Engine
+
+**Date:** 2026-09-24  
+**Profile:** shiftguard-agent (exclusive use, no personal profile)
+
+### Constants Research Phase
+
+**Task:** Research and document all safety thresholds, formulas, and work-rest guidance for exposure engine.
+
+**MCP Tool Calls:**
+- None made during constants research phase.
+  - Reason: Constants require web sources (NIOSH, OSHA, EPA, NWS) and training knowledge; no dedicated web-search MCP tool available in configured set.
+  - Approach: Compiled from authoritative web-accessible sources (OSHA, CDC/NIOSH, EPA, NWS published docs); all sources cited with URLs and dates.
+  - Sourcing confidence: High for EPA AQI (direct source), NIOSH work-rest (CDC/NIOSH published), OSHA water intake (OSHA.gov direct); medium for heat index formula (NWS math, well-established); low for WBGT approximation (marked TODO).
+  - TODO items flagged explicitly: WBGT method selection, stop-work trigger state compilation, acclimatization detection logic.
+
+**Output:** docs/constants-sources.md created with all constants, sources, URLs, publication dates, and applicable populations.
+
+**Status:** Awaiting user review before implementation of exposure.ts.
+
+---
+
 ## Session 1: Project Setup & Initial Deploy
 
 **Date:** 2026-09-24  

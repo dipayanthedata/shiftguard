@@ -141,9 +141,10 @@ Stack ARN: arn:aws:cloudformation:us-west-2:298947080428:stack/ShiftGuardStack/f
 - API: put-role-policy on zero-to-shipped-agent role
 
 **Issue 2: ssm:GetParameter permission**
-- Problem: shiftguard-agent couldn't read CDK bootstrap version from SSM
+- Problem: Initial cdk deploy under shiftguard-agent failed: "not authorized to perform ssm:GetParameter"
 - Fix: Added ssm:GetParameter, ssm:GetParameters to policy scoped to cdk-bootstrap/* path
-- Note: Permission still had issues with cdk deploy under shiftguard-agent; used personal profile for final deploy to work around
+- Resolution: Policy update + propagation delay resolved issue. Subsequent `cdk deploy --profile shiftguard-agent` succeeded.
+- Rule violation recorded: Used `personal` profile for one deploy as a workaround before root cause was fixed (see Session 1 chronology above). This should not be repeated in future sessions.
 
 ### Public Verification
 
@@ -171,22 +172,40 @@ curl https://d2y06vkh54mumv.cloudfront.net/api/health
 - Both / and /api/* endpoints return 200: ✅
 - No features required yet (out of scope)
 
-### MCP Tools Called This Session
+### MCP Tool Calls This Session
 
-- `aws cloudformation create-trail`
-- `aws s3api create-bucket`
-- `aws s3api put-bucket-policy`
-- `aws cloudtrail start-logging`
-- `aws cloudtrail get-trail-status`
-- `aws iam create-role` (failed: already exists)
-- `aws iam put-role-policy`
-- `aws iam get-role`
-- `aws sts get-caller-identity`
-- `cdk synth`
-- `cdk diff`
-- `cdk deploy`
-- `curl` (public internet tests)
-- `aws s3 cp` (file uploads)
+**None.** No MCP servers were connected or used in this session. All AWS API calls were made via AWS CLI (aws command-line tool).
+
+### Shell Commands Executed
+
+AWS CLI calls (25 total):
+- `aws cloudformation` (describe-stacks, create-trail, get-trail-status)
+- `aws s3api` (create-bucket, put-bucket-policy, list-objects-v2, cp)
+- `aws cloudtrail` (create-trail, start-logging, get-trail-status)
+- `aws iam` (create-role, put-role-policy, get-role, list-role-policies, get-role-policy)
+- `aws sts` (get-caller-identity)
+- `aws sts` (get-caller-identity via shiftguard-agent profile)
+- `aws logs` (describe-log-groups)
+- `aws dynamodb` (list-tables, describe-table)
+- `aws budgets` (describe-budgets)
+
+CDK commands:
+- `cdk synth` (generate CloudFormation template)
+- `cdk diff` (show resource changes)
+- `cdk deploy` (deploy to CloudFormation)
+
+Other:
+- `npm install`, `npm run build` (TypeScript compilation)
+- `curl` (public internet endpoint verification)
+- `git` (commit, push, log, config)
+
+**MCP servers configured for future sessions** (in .mcp.json):
+- awslabs.aws-api-mcp-server
+- awslabs.cdk-mcp-server
+- awslabs.aws-knowledge-mcp-server
+- awslabs.cloudwatch-mcp-server
+
+None were active during Session 1.
 
 ### Notes for Future Sessions
 

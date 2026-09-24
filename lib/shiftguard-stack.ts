@@ -111,7 +111,7 @@ exports.handler = async (event) => {
     // Budget alarm at $20
     new budgets.CfnBudget(this, 'Budget20', {
       budget: {
-        budgetName: 'ShiftGuard-$20-Limit',
+        budgetName: 'ShiftGuard-$20-Alert-dipayandas',
         budgetLimit: {
           amount: 20,
           unit: 'USD',
@@ -130,7 +130,7 @@ exports.handler = async (event) => {
           subscribers: [
             {
               subscriptionType: 'EMAIL',
-              address: 'alerts@example.com',
+              address: 'dipayandas.data@gmail.com',
             },
           ],
         },

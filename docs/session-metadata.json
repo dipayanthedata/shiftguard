@@ -1,0 +1,57 @@
+{
+  "version": "1.0",
+  "description": "ShiftGuard Session 1 metadata",
+  "session": {
+    "started": "2026-09-24T11:21:00Z",
+    "ended": "2026-09-24T18:40:00Z",
+    "agent": "Claude Code (Claude Haiku 4.5)",
+    "modelId": "claude-haiku-4-5-20251001",
+    "awsProfile": "shiftguard-agent",
+    "awsPrincipal": "arn:aws:sts::298947080428:assumed-role/zero-to-shipped-agent/shiftguard-agent-session",
+    "region": "us-west-2",
+    "mcp_servers_connected": false,
+    "mcp_servers_configured_for_next_session": [
+      "awslabs.aws-api-mcp-server",
+      "awslabs.cdk-mcp-server",
+      "awslabs.aws-knowledge-mcp-server",
+      "awslabs.cloudwatch-mcp-server"
+    ]
+  },
+  "aws_calls_made": {
+    "total": 25,
+    "via_mcp": 0,
+    "via_aws_cli": 25,
+    "services": [
+      "cloudformation",
+      "s3",
+      "cloudtrail",
+      "iam",
+      "sts",
+      "lambda",
+      "dynamodb",
+      "cloudfront",
+      "budgets",
+      "logs",
+      "ssm"
+    ]
+  },
+  "deployment": {
+    "stackName": "ShiftGuardStack",
+    "stackId": "arn:aws:cloudformation:us-west-2:298947080428:stack/ShiftGuardStack/f8aa4a80-b845-11f1-bc4b-0ae709a06865",
+    "status": "CREATE_COMPLETE",
+    "deploymentTime": "201.56s",
+    "outputs": {
+      "distributionDomain": "d2y06vkh54mumv.cloudfront.net",
+      "functionUrl": "https://og53dmfmmc3ungzynkj2tdf7740kckgt.lambda-url.us-west-2.on.aws/",
+      "tableName": "shiftguard-data"
+    }
+  },
+  "verification": {
+    "publicEndpoints": {
+      "root": "https://d2y06vkh54mumv.cloudfront.net/",
+      "healthEndpoint": "https://d2y06vkh54mumv.cloudfront.net/api/health",
+      "lastVerifiedAt": "2026-09-24T18:37:03Z",
+      "allEndpoints200": true
+    }
+  }
+}

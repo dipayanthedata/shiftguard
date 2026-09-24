@@ -143,7 +143,7 @@ Stack ARN: arn:aws:cloudformation:us-west-2:298947080428:stack/ShiftGuardStack/f
 **Issue 2: ssm:GetParameter permission**
 - Problem: Initial cdk deploy under shiftguard-agent failed: "not authorized to perform ssm:GetParameter"
 - Fix: Added ssm:GetParameter, ssm:GetParameters to policy scoped to cdk-bootstrap/* path
-- Resolution: Policy update + propagation delay resolved issue. Subsequent `cdk deploy --profile shiftguard-agent` succeeded.
+- Resolution: Root cause not conclusively determined. Subsequent `cdk deploy --profile shiftguard-agent` succeeded after the policy update. Policy propagation is the leading hypothesis but was not independently verified (no separate test run with the old policy post-update).
 - Rule violation recorded: Used `personal` profile for one deploy as a workaround before root cause was fixed (see Session 1 chronology above). This should not be repeated in future sessions.
 
 ### Public Verification

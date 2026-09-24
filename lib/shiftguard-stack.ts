@@ -89,6 +89,7 @@ exports.handler = async (event) => {
       },
       priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
       enableIpv6: true,
+      defaultRootObject: 'index.html',
     });
 
     // Update S3 bucket policy for CloudFront OAC

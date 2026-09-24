@@ -1,5 +1,9 @@
 # ShiftGuard Hackathon Project — Constraints & Working Agreement
 
+## Working Directory
+
+`~/dev/shiftguard` (was `/private/tmp/shiftguard` in Session 1; macOS /tmp is ephemeral)
+
 ## Project Context
 
 ShiftGuard: Heat-and-smoke exposure planner for outdoor work crews. Heat resilience / climate adaptation category. Deadline: Oct 2, 2026. Session 1 goal: Deploy empty app to public URL (pass/fail gate); features come later.

@@ -1,5 +1,23 @@
 # Evidence Log: Coding Agent Session
 
+## Relocation and Remote Setup (Between Session 1 and Session 2)
+
+**Repo Relocation:**
+- **From:** `/private/tmp/shiftguard` (Session 1 working directory)
+- **To:** `~/dev/shiftguard` (Session 2 onwards)
+- **Reason:** macOS automatically purges /tmp; moved to persistent home directory
+- **Date:** 2026-09-24 (end of Session 1)
+
+**GitHub Remote:**
+- **Repository:** github.com/dipayanthedata/shiftguard
+- **Visibility:** PRIVATE (required: account ID 298947080428 and IAM policies in EVIDENCE.md)
+- **Branch:** main (pushed from Session 1)
+- **MCP Servers Connected:** 4 servers (aws-api, cdk, aws-knowledge, cloudwatch)
+  - All configured with `AWS_PROFILE=shiftguard-agent` and `AWS_REGION=us-west-2`
+  - Previous session used AWS CLI only; Session 2 prioritizes MCP tool calls
+
+---
+
 ## Session 1: Project Setup & Initial Deploy
 
 **Date:** 2026-09-24  

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ShiftGuard</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>ShiftGuard</h1>
+      <p class="subtitle">Heat & Smoke Exposure Planner</p>
+    </header>
+
+    <main>
+      <div id="status" class="status loading">
+        <p>Checking system status...</p>
+      </div>
+
+      <section id="response" class="response hidden">
+        <h2>System Status</h2>
+        <pre id="response-body"></pre>
+      </section>
+
+      <section id="error" class="error hidden">
+        <h2>Error</h2>
+        <p id="error-message"></p>
+      </section>
+    </main>
+
+    <footer>
+      <p>&copy; 2026 ShiftGuard. Hackathon Project.</p>
+    </footer>
+  </div>
+
+  <script>
+    (async () => {
+      try {
+        const response = await fetch('/api/health');
+        const data = await response.json();
+
+        document.getElementById('status').classList.add('hidden');
+
+        if (response.ok) {
+          document.getElementById('response').classList.remove('hidden');
+          document.getElementById('response-body').textContent = JSON.stringify(data, null, 2);
+        } else {
+          throw new Error(`HTTP ${response.status}: ${data.message || 'Unknown error'}`);
+        }
+      } catch (error) {
+        document.getElementById('status').classList.add('hidden');
+        document.getElementById('error').classList.remove('hidden');
+        document.getElementById('error-message').textContent = error.message;
+      }
+    })();
+  </script>
+</body>
+</html>

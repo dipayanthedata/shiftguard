@@ -53,6 +53,28 @@ exports.handler = async (event) => {
       authType: lambda.FunctionUrlAuthType.NONE,
     });
 
+    // Lambda for POST /api/plan endpoint
+    const planHandler = new lambda.Function(this, 'PlanHandler', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'plan/handler.handler',
+      code: lambda.Code.fromAsset('.'),
+      memorySize: 512, // More memory for data fetching
+      timeout: cdk.Duration.seconds(60), // Longer timeout for API calls
+      environment: {
+        DYNAMODB_TABLE_NAME: 'shiftguard-data',
+        AWS_REGION: this.region,
+      },
+    });
+
+    const planFunctionUrl = planHandler.addFunctionUrl({
+      cors: {
+        allowedOrigins: ['*'],
+        allowedMethods: [lambda.HttpMethod.POST, lambda.HttpMethod.OPTIONS],
+        allowedHeaders: ['Content-Type'],
+      },
+      authType: lambda.FunctionUrlAuthType.NONE,
+    });
+
     // DynamoDB table
     const table = new dynamodb.Table(this, 'DataTable', {
       tableName: 'shiftguard-data',
@@ -79,6 +101,13 @@ exports.handler = async (event) => {
         compress: true,
       },
       additionalBehaviors: {
+        '/api/plan': {
+          origin: new origins.FunctionUrlOrigin(planFunctionUrl),
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
+          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+        },
         '/api/*': {
           origin: new origins.FunctionUrlOrigin(functionUrl),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
@@ -107,6 +136,9 @@ exports.handler = async (event) => {
         },
       })
     );
+
+    // Grant plan Lambda permissions to read/write DynamoDB cache
+    table.grantReadWriteData(planHandler);
 
     // Budget alarm at $20
     new budgets.CfnBudget(this, 'Budget20', {
@@ -145,7 +177,12 @@ exports.handler = async (event) => {
 
     new cdk.CfnOutput(this, 'FunctionUrl', {
       value: functionUrl.url,
-      description: 'Lambda Function URL (for reference; use CloudFront domain)',
+      description: 'Lambda Function URL for /api/health (for reference; use CloudFront domain)',
+    });
+
+    new cdk.CfnOutput(this, 'PlanFunctionUrl', {
+      value: planFunctionUrl.url,
+      description: 'Lambda Function URL for /api/plan (for reference; use CloudFront domain)',
     });
 
     new cdk.CfnOutput(this, 'TableName', {

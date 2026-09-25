@@ -1,6 +1,12 @@
 // NWS gridpoint forecast API integration
 // Fetches hourly forecasts from api.weather.gov (no API key required)
 // Returns temperature, relative humidity, and weather description
+//
+// Two-step process:
+// 1. Convert lat/lon to NWS grid reference (cached 30 days)
+// 2. Fetch hourly forecast from gridpoint (cached 1 hour)
+
+import * as cache from './cache';
 
 const USER_AGENT = 'ShiftGuard (https://github.com/dipayanthedata/shiftguard; contact: 297210783+dipayanthedata@users.noreply.github.com)';
 
@@ -28,6 +34,17 @@ export async function getGridPoint(
   latitude: number,
   longitude: number
 ): Promise<NwsPoint> {
+  // Try cache first (30-day TTL)
+  const cached = await cache.getCachedGridPoint(latitude, longitude);
+  if (cached) {
+    return {
+      gridId: cached.gridId,
+      x: cached.gridX,
+      y: cached.gridY,
+    };
+  }
+
+  // Cache miss: fetch from NWS API
   const url = `https://api.weather.gov/points/${latitude.toFixed(4)},${longitude.toFixed(4)}`;
 
   const response = await fetch(url, {
@@ -51,6 +68,9 @@ export async function getGridPoint(
   const cwa = data.properties.cwa;
   const gridX = data.properties.gridX;
   const gridY = data.properties.gridY;
+
+  // Cache the result (30 days)
+  await cache.cacheGridPoint(latitude, longitude, cwa, gridX, gridY);
 
   return {
     gridId: cwa,
@@ -129,6 +149,18 @@ export async function getForecastForLocation(
   latitude: number,
   longitude: number
 ): Promise<NwsHourlyForecast[]> {
+  // Try cache first (1-hour TTL)
+  const cachedForecast = await cache.getCachedForecast(latitude, longitude);
+  if (cachedForecast) {
+    return cachedForecast.forecast;
+  }
+
+  // Cache miss: get grid point (may be cached for 30 days) and fetch forecast
   const point = await getGridPoint(latitude, longitude);
-  return getHourlyForecast(point.gridId, point.x, point.y);
+  const forecast = await getHourlyForecast(point.gridId, point.x, point.y);
+
+  // Cache the forecast (1 hour)
+  await cache.cacheForecast(latitude, longitude, forecast);
+
+  return forecast;
 }

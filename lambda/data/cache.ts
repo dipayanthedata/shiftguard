@@ -6,7 +6,9 @@ import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
 
 const dynamodb = new DynamoDBClient({ region: process.env.AWS_REGION || 'us-west-2' });
 const TABLE_NAME = process.env.DYNAMODB_TABLE_NAME || 'shiftguard-data';
-const CACHE_TTL_HOURS = 6; // Forecast data valid for 6 hours
+const FORECAST_TTL_HOURS = 1; // NWS forecast updates hourly
+const AQI_TTL_HOURS = 6; // AQI data updates less frequently
+const POINTS_TTL_DAYS = 30; // Grid assignments are stable
 
 // ============================================================================
 // CACHE KEY GENERATION
@@ -20,12 +22,93 @@ function getAqiCacheKey(latitude: number, longitude: number): string {
   return `aqi#${latitude.toFixed(2)}#${longitude.toFixed(2)}`;
 }
 
-function computeTtlTimestamp(): number {
-  return Math.floor((Date.now() + CACHE_TTL_HOURS * 60 * 60 * 1000) / 1000);
+function computeTtlTimestamp(hours: number): number {
+  return Math.floor((Date.now() + hours * 60 * 60 * 1000) / 1000);
 }
 
 // ============================================================================
-// FORECAST CACHE
+// GRID POINTS CACHE (30 days)
+// ============================================================================
+
+export interface CachedGridPoint {
+  latitude: number;
+  longitude: number;
+  gridId: string;
+  gridX: number;
+  gridY: number;
+  fetchedAtUtc: string;
+}
+
+function getPointsCacheKey(latitude: number, longitude: number): string {
+  return `gridpoint#${latitude.toFixed(2)}#${longitude.toFixed(2)}`;
+}
+
+export async function cacheGridPoint(
+  latitude: number,
+  longitude: number,
+  gridId: string,
+  gridX: number,
+  gridY: number
+): Promise<void> {
+  const key = getPointsCacheKey(latitude, longitude);
+  const ttl = computeTtlTimestamp(POINTS_TTL_DAYS * 24);
+
+  const item = {
+    pk: { S: key },
+    sk: { S: 'gridpoint' },
+    latitude: { N: latitude.toString() },
+    longitude: { N: longitude.toString() },
+    gridId: { S: gridId },
+    gridX: { N: gridX.toString() },
+    gridY: { N: gridY.toString() },
+    fetchedAtUtc: { S: new Date().toISOString() },
+    ttl: { N: ttl.toString() },
+  };
+
+  const command = new PutItemCommand({
+    TableName: TABLE_NAME,
+    Item: item,
+  });
+
+  await dynamodb.send(command);
+  console.log(`[cache] WRITE gridpoint ${key} (TTL: ${POINTS_TTL_DAYS}d)`);
+}
+
+export async function getCachedGridPoint(
+  latitude: number,
+  longitude: number
+): Promise<CachedGridPoint | null> {
+  const key = getPointsCacheKey(latitude, longitude);
+
+  const command = new GetItemCommand({
+    TableName: TABLE_NAME,
+    Key: {
+      pk: { S: key },
+      sk: { S: 'gridpoint' },
+    },
+  });
+
+  const response = await dynamodb.send(command);
+  if (!response.Item) {
+    console.log(`[cache] MISS gridpoint ${key}`);
+    return null; // Cache miss
+  }
+
+  const item = unmarshall(response.Item);
+  console.log(`[cache] HIT gridpoint ${key} (age: ${Math.floor((Date.now() - new Date(item.fetchedAtUtc).getTime()) / 1000)}s)`);
+
+  return {
+    latitude: item.latitude,
+    longitude: item.longitude,
+    gridId: item.gridId,
+    gridX: item.gridX,
+    gridY: item.gridY,
+    fetchedAtUtc: item.fetchedAtUtc,
+  };
+}
+
+// ============================================================================
+// FORECAST CACHE (1 hour)
 // ============================================================================
 
 export interface CachedForecast {
@@ -53,7 +136,8 @@ export async function cacheForecast(
   }>
 ): Promise<void> {
   const key = getForecastCacheKey(latitude, longitude);
-  const ttl = computeTtlTimestamp();
+  const ttl = computeTtlTimestamp(FORECAST_TTL_HOURS);
+  console.log(`[cache] WRITE forecast ${key} (TTL: ${FORECAST_TTL_HOURS}h)`);
 
   const item = {
     pk: { S: key },
@@ -89,10 +173,12 @@ export async function getCachedForecast(
 
   const response = await dynamodb.send(command);
   if (!response.Item) {
+    console.log(`[cache] MISS forecast ${key}`);
     return null; // Cache miss
   }
 
   const item = unmarshall(response.Item);
+  console.log(`[cache] HIT forecast ${key} (age: ${Math.floor((Date.now() - new Date(item.fetchedAtUtc).getTime()) / 1000)}s)`);
 
   return {
     latitude: item.latitude,
@@ -121,7 +207,8 @@ export async function cacheAqi(
   source: string
 ): Promise<void> {
   const key = getAqiCacheKey(latitude, longitude);
-  const ttl = computeTtlTimestamp();
+  const ttl = computeTtlTimestamp(AQI_TTL_HOURS);
+  console.log(`[cache] WRITE aqi ${key} (TTL: ${AQI_TTL_HOURS}h)`);
 
   const item = {
     pk: { S: key },
@@ -158,10 +245,12 @@ export async function getCachedAqi(
 
   const response = await dynamodb.send(command);
   if (!response.Item) {
+    console.log(`[cache] MISS aqi ${key}`);
     return null; // Cache miss
   }
 
   const item = unmarshall(response.Item);
+  console.log(`[cache] HIT aqi ${key} (age: ${Math.floor((Date.now() - new Date(item.fetchedAtUtc).getTime()) / 1000)}s)`);
 
   return {
     latitude: item.latitude,

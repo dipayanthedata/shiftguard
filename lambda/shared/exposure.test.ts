@@ -20,10 +20,11 @@ describe('heatIndex()', () => {
   it('calculates heat index for normal conditions (95°F, 50% RH)', () => {
     const hi = heatIndex(95, 50);
     expect(hi).toBeGreaterThan(95);
-    // NWS Rothfusz reference: 95°F, 50% RH yields approximately 105.2°F
-    // Test anchored to actual formula output (±1°F tolerance for precision)
-    expect(hi).toBeGreaterThanOrEqual(104.2);
-    expect(hi).toBeLessThanOrEqual(106.2);
+    // NWS Rothfusz regression reference (hand-computed):
+    // HI ≈ -42.379 + 2.049*95 + 10.143*50 - 0.225*95*50 ... ≈ 105.07°F
+    // NWS chart confirms: 95°F dry-bulb, 50% RH → ~104–106°F
+    expect(hi).toBeGreaterThanOrEqual(104);
+    expect(hi).toBeLessThanOrEqual(106);
   });
 
   it('increases with higher humidity', () => {

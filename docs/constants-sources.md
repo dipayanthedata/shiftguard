@@ -238,9 +238,40 @@ const STOP_WORK_HEAT_INDEX_F = 105;       // Conservative threshold; WA/OR sourc
 
 ---
 
+## Design Decision: NIOSH Exclusion from v1
+
+NIOSH Recommended Exposure Limit (REL) work-rest tables are NOT implemented in v1.
+
+**Reason:** NIOSH tables are indexed to WBGT (Wet-Bulb Globe Temperature), which requires specialized equipment (globe thermometer + wet-bulb thermometer). WBGT cannot be reliably estimated from the NWS gridpoint forecast API (which provides only temperature, relative humidity, and pressure). Heat index is not a valid substitute for WBGT in occupational safety decisions.
+
+**Washington State v1 uses instead:** Ambient temperature (tempF) and Table 2 cool-down cadence, which are fully verified, regulatory-backed, and computable from available NWS data.
+
+**Future enhancement:** Integrate NIOSH work-rest logic in v2 if WBGT data source (e.g., specialized weather API, solar irradiance API) or validated WBGT estimation method becomes available.
+
+---
+
+## AQI Corrections (Honest Record)
+
+The AQI breakpoints table was corrected twice in opposite directions:
+
+1. **First assertion (Session 2, initial):** Claimed 2024 EPA revision changed the Good/Moderate breakpoint from 12.0 to 9.0 µg/m³, based on the reasoning that the 2024 NAAQS annual standard changed from 12 to 9 µg/m³. This was wrong reasoning: NAAQS annual standard does not drive AQI breakpoints (which are based on 24-hour averages). The 24-hour NAAQS remained 35 µg/m³. Additionally, the table claimed upper breakpoints remained unchanged (150.4, 250.4, 500), which was also incorrect.
+
+2. **Second correction (Session 2, user instruction):** Reverted wholesale to the 2016 EPA breakpoints, marking the 2024 claim as TODO: VERIFY. This was over-correction—it threw out a real change (the 9.0 breakpoint revision actually did occur) alongside the fabricated reasoning.
+
+3. **Final resolution (Session 2, verified):** Checked EPA Air Quality System code table (authoritative, machine-readable source). The 2024 revision is real and affects ALL upper breakpoints:
+   - Good: 0.0–9.0 µg/m³ (revised to track 2024 annual standard)
+   - Unhealthy (151–200): 55.5–125.4 µg/m³ (revised, was 150.4)
+   - Very Unhealthy (201–300): 125.5–225.4 µg/m³ (revised, was 250.4)
+   - Hazardous (301–500): 225.5–325.4 µg/m³ (revised, was 500)
+
+**Lesson:** Both the initial assertion and the overcorrection were wrong. The honest outcome was to verify against the primary source (EPA AQS code table), not to guess or revert to a known-stale table. Reviewer's overcorrection was also a mistake; the correct response when uncertain is to check the authoritative source, not to revert.
+
+---
+
 ## Document History
 
 | Date | Change |
 |---|---|
 | 2026-09-24 Session 2 | Initial research & sourcing phase |
+| 2026-09-24 Session 2 (final) | Corrected constants; removed NIOSH v1 with rationale; verified AQI breakpoints against EPA AQS code table; documented corrections history |
 

@@ -1,36 +1,47 @@
 // Pure TypeScript exposure engine — no network calls, no AWS SDK, no model calls
-// All numeric thresholds imported from thresholds.ts; no hardcoded literals
+//
+// STRUCTURAL NOTE: Washington State heat rule (WAC 296-62-095) is driven by
+// AMBIENT AIR TEMPERATURE, not heat index. All WA compliance decisions use
+// tempF directly. Heat index is calculated and reported as advisory context only.
+//
+// NIOSH work-rest tables (based on WBGT) are NOT included in v1. True WBGT
+// requires specialized equipment (globe thermometer + wet-bulb thermometer).
+// WBGT cannot be reliably estimated from NWS gridpoint API (which provides
+// temperature, relative humidity, pressure). Attempting to use heat index as
+// a WBGT substitute would produce misleading safety decisions. Future enhancement:
+// integrate NIOSH logic if WBGT data source or validated estimation method becomes available.
+// See constants-sources.md for full rationale.
 
 import {
-  HEAT_INDEX_CAUTION_F,
-  HEAT_INDEX_SHADE_REQUIRED_F,
-  HEAT_INDEX_STOP_WORK_F,
+  WA_ACTION_LEVEL_F,
+  WA_NONBREATHING_CLOTHING_ACTION_LEVEL_F,
+  WA_HIGH_HEAT_PROCEDURES_TRIGGER_F,
+  WA_TABLE_2_COOLDOWN_CADENCE_90_99F,
+  WA_TABLE_2_COOLDOWN_CADENCE_100F_PLUS,
+  WA_WATER_INTAKE_QUARTS_PER_HOUR,
+  WA_ACCLIMATIZATION_OBSERVATION_WINDOW_DAYS,
+  WA_INCIDENTAL_EXPOSURE_EXEMPTION_MINUTES,
+  WA_SMOKE_TRAINING_RESPONSE_THRESHOLD,
+  WA_SMOKE_MANDATORY_N95_THRESHOLD,
+  WA_SMOKE_HIGH_RISK_THRESHOLD,
   AQI_BREAKPOINTS_PM25,
   AQI_CATEGORIES,
-  WORK_REST_UNACCLIMATIZED,
-  WORK_REST_ACCLIMATIZED,
-  WATER_INTAKE_LIGHT_HEAT,
-  WATER_INTAKE_MODERATE_HEAT,
-  WATER_INTAKE_HIGH_HEAT,
+  getUnverifiedThresholds,
+  JURISDICTION_WASHINGTON,
+  JURISDICTION_DEFAULT,
 } from './thresholds';
 
 // ============================================================================
-// HEAT INDEX CALCULATION (NWS Rothfusz Regression)
+// HEAT INDEX CALCULATION (NWS Rothfusz Regression) — ADVISORY ONLY
 // ============================================================================
-// Formula: HI = a0 + a1*T + a2*RH + a3*T*RH + a4*T^2 + a5*RH^2 + a6*T^2*RH + a7*T*RH^2 + a8*T^2*RH^2
-// Valid: 70–110°F (accuracy degrades outside this range)
-// Adjustments for edge cases documented below
 
 export function heatIndex(tempF: number, relativeHumidity: number): number {
-  // Clamp RH to 0–100%
   const rh = Math.max(0, Math.min(100, relativeHumidity));
 
-  // Below 80°F, use ambient temperature (formula unreliable)
   if (tempF < 80) {
     return tempF;
   }
 
-  // NWS Rothfusz coefficients
   const a0 = -42.379;
   const a1 = 2.04901523;
   const a2 = 10.14333127;
@@ -55,15 +66,14 @@ export function heatIndex(tempF: number, relativeHumidity: number): number {
     a7 * t * r * r +
     a8 * t * t * r * r;
 
-  // Adjustments for extreme conditions (NWS documented)
+  // Low humidity adjustment
   if (rh < 13 && tempF >= 80 && tempF <= 112) {
-    // Low humidity adjustment
     const adjustment = ((13 - rh) / 4) * Math.sqrt((17 - Math.abs(tempF - 95)) / 17);
     return hi - adjustment;
   }
 
+  // High humidity adjustment
   if (rh > 85 && tempF >= 80 && tempF <= 87) {
-    // High humidity adjustment
     const adjustment = ((rh - 85) / 10) * ((87 - tempF) / 5);
     return hi + adjustment;
   }
@@ -72,318 +82,291 @@ export function heatIndex(tempF: number, relativeHumidity: number): number {
 }
 
 // ============================================================================
-// AQI CLASSIFICATION FROM PM2.5 (µg/m³)
+// AQI CLASSIFICATION FROM PM2.5 (µg/m³) — VERIFIED 2024 EPA BREAKPOINTS
 // ============================================================================
 
 export interface AqiClassification {
+  pm25: number;
   aqi: number;
   category: string;
-  pm25: number;
 }
 
 export function classifyAqi(pm25: number): AqiClassification {
   const breakpoints = AQI_BREAKPOINTS_PM25.value as number[][];
 
-  // Find matching breakpoint range
   for (let i = 0; i < breakpoints.length; i++) {
     const [low, high] = breakpoints[i];
-    if (pm25 >= low && pm25 <= high) {
-      // Linear interpolation between AQI ranges
+    if (pm25 >= low && (high === Infinity || pm25 <= high)) {
       const aqi_low = AQI_CATEGORIES[i].min;
       const aqi_high = AQI_CATEGORIES[i].max;
-      const aqi = aqi_low + ((pm25 - low) / (high - low)) * (aqi_high - aqi_low);
+
+      let aqi: number;
+      if (high === Infinity) {
+        // Beyond AQI: scale based on 100 µg/m³ intervals above 325.5
+        aqi = aqi_low + (pm25 - low) / 100;
+      } else {
+        aqi = aqi_low + ((pm25 - low) / (high - low)) * (aqi_high - aqi_low);
+      }
 
       return {
+        pm25: Math.round(pm25 * 10) / 10,
         aqi: Math.round(aqi),
         category: AQI_CATEGORIES[i].label,
-        pm25: Math.round(pm25 * 10) / 10,
       };
     }
   }
 
-  // Fallback for extreme values
   return {
-    aqi: pm25 > 250.5 ? 400 : 0,
-    category: pm25 > 250.5 ? 'Hazardous' : 'Good',
     pm25: Math.round(pm25 * 10) / 10,
+    aqi: 0,
+    category: 'Good',
   };
 }
 
 // ============================================================================
-// METABOLIC WORKLOAD CLASSIFICATION
+// WASHINGTON STATE COOL-DOWN CADENCE (WA TABLE 2)
 // ============================================================================
+// Driven by ambient temperature; no action required below 90°F.
 
-export type Workload = 'light' | 'moderate' | 'heavy' | 'very-heavy';
-
-export function classifyWorkload(metabolicRateWm2: number): Workload {
-  if (metabolicRateWm2 < 150) return 'light';
-  if (metabolicRateWm2 < 200) return 'moderate';
-  if (metabolicRateWm2 < 260) return 'heavy';
-  return 'very-heavy';
+export interface CoolDownCadence {
+  tempF: number;
+  coolDownRequired: boolean;
+  cadence: string | null;
+  minutesPerHour: number | null;
+  requiresShade: boolean;
+  requiresWater: boolean;
+  source: string;
 }
 
-// ============================================================================
-// WORK-REST CADENCE (NIOSH REL)
-// ============================================================================
+export function coolDownCadence(tempF: number): CoolDownCadence {
+  const actionLevel = (WA_ACTION_LEVEL_F.value as number);
+  const highHeatTrigger = (WA_HIGH_HEAT_PROCEDURES_TRIGGER_F.value as number);
 
-export interface WorkRestRecommendation {
-  workPercentage: number;
-  restPercentage: number;
-  minutesPerHour: { work: number; rest: number };
-  recommendation: string;
-  breaksRequired: boolean;
-  shadeRequired: boolean;
-  waterIntakeLitersPerHour: number;
-}
-
-export function workRestCadence(
-  heatIndexF: number,
-  workload: Workload,
-  acclimatized: boolean = false
-): WorkRestRecommendation {
-  const workRestTable = acclimatized ? WORK_REST_ACCLIMATIZED.value : WORK_REST_UNACCLIMATIZED.value;
-
-  // Map workload to column index
-  const workloadMap: { [key in Workload]: number } = {
-    light: 0,
-    moderate: 1,
-    heavy: 2,
-    'very-heavy': 3,
-  };
-
-  const workloadIdx = workloadMap[workload];
-
-  // Convert heat index (°F) to WBGT proxy (°C) for table lookup
-  // Note: This is a proxy approximation; true WBGT requires equipment
-  const wbgtC = (heatIndexF - 32) * (5 / 9);
-
-  // Find closest WBGT row in table
-  let selectedRow: number[] = [0, 0, 0, 0]; // Default: stop work
-  for (const row of workRestTable as number[][]) {
-    if (wbgtC >= row[0]) {
-      selectedRow = row.slice(1) as number[];
-    }
+  if (tempF < actionLevel) {
+    return {
+      tempF,
+      coolDownRequired: false,
+      cadence: null,
+      minutesPerHour: null,
+      requiresShade: false,
+      requiresWater: false,
+      source: 'WA WAC 296-62-095 (below action level)',
+    };
   }
 
-  const workPercentage = selectedRow[workloadIdx] || 0;
-  const restPercentage = 100 - workPercentage;
-
-  // Break down into minutes per hour
-  const minutesPerHour = {
-    work: Math.round((workPercentage / 100) * 60),
-    rest: Math.round((restPercentage / 100) * 60),
-  };
-
-  // Determine water intake
-  let waterIntakeLitersPerHour = WATER_INTAKE_LIGHT_HEAT.value as number;
-  if (heatIndexF >= 100) {
-    waterIntakeLitersPerHour = WATER_INTAKE_HIGH_HEAT.value as number;
-  } else if (heatIndexF >= 90) {
-    waterIntakeLitersPerHour = WATER_INTAKE_MODERATE_HEAT.value as number;
+  if (tempF >= actionLevel && tempF < highHeatTrigger) {
+    // 80–89°F: action level but below high-heat procedures
+    return {
+      tempF,
+      coolDownRequired: true,
+      cadence: 'Preventative cool-down on request; mandatory observation',
+      minutesPerHour: null,
+      requiresShade: true,
+      requiresWater: true,
+      source: 'WA WAC 296-62-095 (action level)',
+    };
   }
 
-  // Generate human-readable recommendation
-  let recommendation = '';
-  if (workPercentage === 0) {
-    recommendation = 'STOP WORK — conditions too hot for this workload';
-  } else if (workPercentage === 100) {
-    recommendation = 'Continuous work allowed; monitor hydration and rest breaks';
-  } else {
-    recommendation = `${workPercentage}% work, ${restPercentage}% rest in shade every hour`;
+  if (tempF >= highHeatTrigger && tempF < 100) {
+    // 90–99°F: Table 2 cadence
+    const cadence = WA_TABLE_2_COOLDOWN_CADENCE_90_99F.value as string;
+    return {
+      tempF,
+      coolDownRequired: true,
+      cadence,
+      minutesPerHour: 10, // 10 min rest per 2 hours = 5 min per hour
+      requiresShade: true,
+      requiresWater: true,
+      source: 'WA WAC 296-62-095 Table 2 (90–99°F)',
+    };
   }
 
-  const breaksRequired = restPercentage > 0;
-  const shadeRequired = heatIndexF >= (HEAT_INDEX_SHADE_REQUIRED_F.value as number);
-
+  // 100°F+: Table 2 high-heat cadence
+  const cadence = WA_TABLE_2_COOLDOWN_CADENCE_100F_PLUS.value as string;
   return {
-    workPercentage,
-    restPercentage,
-    minutesPerHour,
-    recommendation,
-    breaksRequired,
-    shadeRequired,
-    waterIntakeLitersPerHour,
+    tempF,
+    coolDownRequired: true,
+    cadence,
+    minutesPerHour: 15, // 15 min rest per 1 hour
+    requiresShade: true,
+    requiresWater: true,
+    source: 'WA WAC 296-62-095 Table 2 (100°F+)',
   };
 }
 
 // ============================================================================
-// STOP-WORK DECISION
+// WASHINGTON STATE SMOKE EXPOSURE REQUIREMENTS (WAC 296-820)
 // ============================================================================
+// Keyed to PM2.5 µg/m³ (not AQI, which changed with 2024 EPA revision).
 
-export interface StopWorkDecision {
-  shouldStop: boolean;
-  heatRisk: 'low' | 'moderate' | 'high' | 'extreme';
-  airQualityRisk: 'low' | 'moderate' | 'high' | 'extreme';
-  reasoning: string;
-  recommendedAction: string;
+export interface SmokeRequirements {
+  pm25: number;
+  category: 'low' | 'training' | 'mandatory-ppe' | 'high-risk';
+  trainingRequired: boolean;
+  responsePlanRequired: boolean;
+  voluntaryN95Available: boolean;
+  mandatoryN95Provided: boolean;
+  additionalActions: string | null;
+  source: string;
+  sourceStatus: 'VERIFIED' | 'UNSOURCED';
 }
 
-export function stopWorkTriggers(heatIndexF: number, aqi: number): StopWorkDecision {
-  const stopWorkThreshold = HEAT_INDEX_STOP_WORK_F.value as number;
-  const cautionThreshold = HEAT_INDEX_CAUTION_F.value as number;
+export function smokeRequirements(pm25: number): SmokeRequirements {
+  const trainingThreshold = (WA_SMOKE_TRAINING_RESPONSE_THRESHOLD.value as number);
+  const mandatoryN95Threshold = (WA_SMOKE_MANDATORY_N95_THRESHOLD.value as number);
+  const highRiskThreshold = (WA_SMOKE_HIGH_RISK_THRESHOLD.value as number);
 
-  // Classify heat risk
-  let heatRisk: 'low' | 'moderate' | 'high' | 'extreme' = 'low';
-  if (heatIndexF >= stopWorkThreshold) {
-    heatRisk = 'extreme';
-  } else if (heatIndexF >= cautionThreshold) {
-    heatRisk = 'high';
-  } else if (heatIndexF >= 85) {
-    heatRisk = 'moderate';
-  }
-
-  // Classify air quality risk
-  let airQualityRisk: 'low' | 'moderate' | 'high' | 'extreme' = 'low';
-  if (aqi >= 301) {
-    airQualityRisk = 'extreme';
-  } else if (aqi >= 201) {
-    airQualityRisk = 'high';
-  } else if (aqi >= 101) {
-    airQualityRisk = 'moderate';
+  if (pm25 < trainingThreshold) {
+    return {
+      pm25,
+      category: 'low',
+      trainingRequired: false,
+      responsePlanRequired: false,
+      voluntaryN95Available: false,
+      mandatoryN95Provided: false,
+      additionalActions: null,
+      source: 'WA WAC 296-820 (outdoor PM2.5 < 20.5 µg/m³)',
+      sourceStatus: 'VERIFIED',
+    };
   }
 
-  // Decision logic
-  const shouldStop = heatRisk === 'extreme' || airQualityRisk === 'extreme' || (heatRisk === 'high' && airQualityRisk === 'high');
-
-  // Reasoning
-  let reasoning = '';
-  if (heatRisk === 'extreme') {
-    reasoning = `Heat index ${heatIndexF.toFixed(1)}°F exceeds stop-work threshold (${stopWorkThreshold}°F). `;
-  }
-  if (airQualityRisk === 'extreme') {
-    reasoning += `AQI ${aqi} exceeds safe threshold for outdoor work. `;
-  }
-  if (!shouldStop && heatRisk === 'high') {
-    reasoning += `Heat index ${heatIndexF.toFixed(1)}°F is in caution zone; mandatory breaks and shade required. `;
-  }
-
-  // Recommended action
-  let recommendedAction = 'Continue work with standard precautions (shade, water, rest).';
-  if (heatRisk === 'high' || airQualityRisk === 'high') {
-    recommendedAction = 'Increase rest breaks, ensure shade availability, and monitor for heat illness symptoms.';
-  }
-  if (shouldStop) {
-    recommendedAction = 'HALT outdoor work immediately. Resume only when conditions improve.';
+  if (pm25 >= trainingThreshold && pm25 < mandatoryN95Threshold) {
+    return {
+      pm25,
+      category: 'training',
+      trainingRequired: true,
+      responsePlanRequired: true,
+      voluntaryN95Available: true,
+      mandatoryN95Provided: false,
+      additionalActions: 'REGULATORY: Employer must provide training and response plan; N95s available on employee request (voluntary)',
+      source: 'WA WAC 296-820 (outdoor PM2.5 20.5–35.4 µg/m³)',
+      sourceStatus: 'VERIFIED',
+    };
   }
 
+  if (pm25 >= mandatoryN95Threshold && pm25 < highRiskThreshold) {
+    return {
+      pm25,
+      category: 'mandatory-ppe',
+      trainingRequired: true,
+      responsePlanRequired: true,
+      voluntaryN95Available: true,
+      mandatoryN95Provided: true,
+      additionalActions: 'REGULATORY: Employer MUST provide NIOSH-approved N95 respirators at no cost and encourage use',
+      source: 'WA WAC 296-820 (outdoor PM2.5 35.5–250.4 µg/m³)',
+      sourceStatus: 'VERIFIED',
+    };
+  }
+
+  // pm25 >= 250.5: high-risk, requirements unconfirmed
   return {
-    shouldStop,
-    heatRisk,
-    airQualityRisk,
-    reasoning: reasoning.trim(),
-    recommendedAction,
+    pm25,
+    category: 'high-risk',
+    trainingRequired: true,
+    responsePlanRequired: true,
+    voluntaryN95Available: true,
+    mandatoryN95Provided: true,
+    additionalActions: 'SHIFTGUARD RECOMMENDATION (UNSOURCED): Conditions extremely hazardous; strongly consider work stoppage or evacuation. Specific regulatory requirements above PM2.5 250.5 µg/m³ not yet verified.',
+    source: 'WA WAC 296-820 (outdoor PM2.5 ≥250.5 µg/m³) — UNSOURCED',
+    sourceStatus: 'UNSOURCED',
   };
 }
 
 // ============================================================================
-// SHIFT PLANNING (HIGH-LEVEL)
+// SHIFT PLANNING
 // ============================================================================
 
 export interface HourlyForecast {
-  hour: number; // 0–23
+  hour: number;
   tempF: number;
   relativeHumidity: number;
-  pm25: number; // µg/m³
+  pm25: number;
 }
 
 export interface ShiftWindow {
   startHour: number;
   endHour: number;
-  workloadWm2: number;
-  acclimatized: boolean;
-  jurisdiction: 'washington-state' | 'federal-osha'; // v1 scoped to WA
+  jurisdiction: 'washington-state' | 'federal-osha';
+  isNewOrReturningWorker: boolean;
+}
+
+export interface HourlyAnalysis {
+  hour: number;
+  tempF: number;
+  heatIndexF: number;
+  pm25: number;
+  aqi: AqiClassification;
+  coolDown: CoolDownCadence;
+  smoke: SmokeRequirements;
 }
 
 export interface ShiftPlan {
   jurisdiction: string;
   shift: ShiftWindow;
-  hourlyAnalysis: Array<{
-    hour: number;
-    tempF: number;
-    heatIndexF: number;
-    aqi: number;
-    workRest: WorkRestRecommendation;
-    stopWork: StopWorkDecision;
-  }>;
-  riskLevel: 'low' | 'moderate' | 'high' | 'extreme';
-  recommendations: string[];
+  hourlyAnalysis: HourlyAnalysis[];
+  regulatoryRequirements: string[];
+  shiftGuardRecommendations: string[];
   unverifiedThresholds: string[];
 }
 
 export function planShift(hourlyForecast: HourlyForecast[], shift: ShiftWindow): ShiftPlan {
   const analysis = hourlyForecast
     .filter((h) => h.hour >= shift.startHour && h.hour < shift.endHour)
-    .map((h) => {
-      const hi = heatIndex(h.tempF, h.relativeHumidity);
-      const aqi = classifyAqi(h.pm25).aqi;
-      const workload = classifyWorkload(shift.workloadWm2);
-      const workRest = workRestCadence(hi, workload, shift.acclimatized);
-      const stopWork = stopWorkTriggers(hi, aqi);
+    .map((h) => ({
+      hour: h.hour,
+      tempF: Math.round(h.tempF * 10) / 10,
+      heatIndexF: Math.round(heatIndex(h.tempF, h.relativeHumidity) * 10) / 10,
+      pm25: Math.round(h.pm25 * 10) / 10,
+      aqi: classifyAqi(h.pm25),
+      coolDown: coolDownCadence(h.tempF),
+      smoke: smokeRequirements(h.pm25),
+    }));
 
-      return {
-        hour: h.hour,
-        tempF: Math.round(h.tempF * 10) / 10,
-        heatIndexF: Math.round(hi * 10) / 10,
-        aqi,
-        workRest,
-        stopWork,
-      };
-    });
+  // Always-applicable regulatory requirements
+  const regulatoryRequirements: string[] = [];
 
-  // Determine overall risk
-  let riskLevel: 'low' | 'moderate' | 'high' | 'extreme' = 'low';
-  for (const h of analysis) {
-    if (h.stopWork.shouldStop) {
-      riskLevel = 'extreme';
-      break;
-    }
-    if (h.stopWork.heatRisk === 'extreme' || h.stopWork.airQualityRisk === 'extreme') {
-      riskLevel = 'extreme';
-      break;
-    }
-    if (h.stopWork.heatRisk === 'high' || h.stopWork.airQualityRisk === 'high') {
-      if (riskLevel === 'low') riskLevel = 'high';
-    }
-    if ((h.stopWork.heatRisk === 'moderate' || h.stopWork.airQualityRisk === 'moderate') && riskLevel === 'low') {
-      riskLevel = 'moderate';
-    }
-  }
+  if (shift.jurisdiction === JURISDICTION_WASHINGTON) {
+    regulatoryRequirements.push('REGULATORY: Ambient temperature below 80°F: no heat rule triggers.');
+    regulatoryRequirements.push('REGULATORY: At 80°F+: employer must provide shade, drinking water, opportunity for rest.');
+    regulatoryRequirements.push('REGULATORY: Water intake: minimum 1 quart per employee per hour when ambient ≥80°F.');
 
-  // Recommendations
-  const recommendations: string[] = [];
+    if (shift.isNewOrReturningWorker) {
+      regulatoryRequirements.push('REGULATORY: New or returning worker in heat: mandatory observation for 14 consecutive days of heat exposure (acclimatization period).');
+    }
 
-  if (riskLevel === 'extreme') {
-    recommendations.push('Shift cannot proceed safely under current conditions.');
+    const incidentalExemption = (WA_INCIDENTAL_EXPOSURE_EXEMPTION_MINUTES.value as number);
+    regulatoryRequirements.push(`REGULATORY: Incidental exposure exemption: if heat exposure ≤${incidentalExemption} minutes in any 60-minute period, rule does not apply.`);
+
+    // Add smoke requirements if relevant
+    const hasSmoke = analysis.some((h) => h.pm25 >= 20.5);
+    if (hasSmoke) {
+      regulatoryRequirements.push('REGULATORY: Wildfire smoke (PM2.5 ≥20.5 µg/m³): employer must have training, response plan, and provide N95s as required by tier.');
+    }
   } else {
-    const hasStopWork = analysis.some((h) => h.stopWork.shouldStop);
-    const hasHighRisk = analysis.some((h) => h.stopWork.heatRisk === 'high' || h.stopWork.airQualityRisk === 'high');
-
-    if (hasStopWork) {
-      recommendations.push('Afternoon hours have extreme conditions; schedule work for early morning or evening.');
-    }
-
-    if (hasHighRisk) {
-      recommendations.push('Ensure shade, water, and frequent rest breaks available throughout shift.');
-    }
-
-    if (shift.acclimatized === false) {
-      recommendations.push('Crew is unacclimatized (first 1–2 days of heat); follow stricter thresholds; monitor closely for heat illness.');
-    }
-
-    const peakHeat = analysis.reduce((max, h) => (h.heatIndexF > max ? h.heatIndexF : max), 0);
-    recommendations.push(`Peak heat index: ${peakHeat}°F. Hydration and rest essential.`);
+    regulatoryRequirements.push('Federal OSHA General Duty Clause applies. No state-specific rule matched.');
   }
 
-  // Import threshold status
-  const { getUnverifiedThresholds } = require('./thresholds');
-  const unverifiedThresholds = getUnverifiedThresholds();
+  // ShiftGuard recommendations (always clearly labeled)
+  const shiftGuardRecommendations: string[] = [];
+
+  const peakTemp = analysis.reduce((max, h) => (h.tempF > max ? h.tempF : max), 0);
+  if (peakTemp >= 90) {
+    shiftGuardRecommendations.push(`SHIFTGUARD RECOMMENDATION: Peak ambient temperature ${peakTemp}°F. Monitor workers frequently for heat illness symptoms. Ensure first-aid responders are on-site.`);
+  }
+
+  const peakPm25 = analysis.reduce((max, h) => (h.pm25 > max ? h.pm25 : max), 0);
+  if (peakPm25 >= 35.5) {
+    shiftGuardRecommendations.push(`SHIFTGUARD RECOMMENDATION: Peak PM2.5 ${peakPm25} µg/m³ (AQI ${analysis.find((h) => h.pm25 === peakPm25)?.aqi.aqi}). If outdoors during peak smoke, consider shorter shifts or evacuation to cleaner air.`);
+  }
+
+  shiftGuardRecommendations.push('SHIFTGUARD RECOMMENDATION: Heat index and smoke are reported for context. Primary decision-making uses ambient temperature (WA rule) and PM2.5 µg/m³ (smoke rule).');
 
   return {
-    jurisdiction: shift.jurisdiction === 'washington-state' ? 'Washington State (WAC 296-62-095)' : 'Federal OSHA (General Duty Clause)',
+    jurisdiction: shift.jurisdiction === JURISDICTION_WASHINGTON ? 'Washington State (WAC 296-62-095 heat, WAC 296-820 smoke)' : 'Federal OSHA',
     shift,
     hourlyAnalysis: analysis,
-    riskLevel,
-    recommendations,
-    unverifiedThresholds,
+    regulatoryRequirements,
+    shiftGuardRecommendations,
+    unverifiedThresholds: getUnverifiedThresholds(),
   };
 }

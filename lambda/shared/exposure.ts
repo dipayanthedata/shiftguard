@@ -132,7 +132,8 @@ export interface CoolDownCadence {
   tempF: number;
   coolDownRequired: boolean;
   cadence: string | null;
-  minutesPerHour: number | null;
+  restMinutes: number | null; // WA Table 2: 10 or 15, null if no cadence required
+  perHours: number | null; // WA Table 2: 2 (every 2 hours) or 1 (every 1 hour), null if no cadence
   requiresShade: boolean;
   requiresWater: boolean;
   source: string;
@@ -147,7 +148,8 @@ export function coolDownCadence(tempF: number): CoolDownCadence {
       tempF,
       coolDownRequired: false,
       cadence: null,
-      minutesPerHour: null,
+      restMinutes: null,
+      perHours: null,
       requiresShade: false,
       requiresWater: false,
       source: 'WA WAC 296-62-095 (below action level)',
@@ -160,7 +162,8 @@ export function coolDownCadence(tempF: number): CoolDownCadence {
       tempF,
       coolDownRequired: true,
       cadence: 'Preventative cool-down on request; mandatory observation',
-      minutesPerHour: null,
+      restMinutes: null,
+      perHours: null,
       requiresShade: true,
       requiresWater: true,
       source: 'WA WAC 296-62-095 (action level)',
@@ -168,26 +171,28 @@ export function coolDownCadence(tempF: number): CoolDownCadence {
   }
 
   if (tempF >= highHeatTrigger && tempF < 100) {
-    // 90–99°F: Table 2 cadence
+    // 90–99°F: Table 2 cadence — 10 min rest every 2 hours
     const cadence = WA_TABLE_2_COOLDOWN_CADENCE_90_99F.value as string;
     return {
       tempF,
       coolDownRequired: true,
       cadence,
-      minutesPerHour: 10, // 10 min rest per 2 hours = 5 min per hour
+      restMinutes: 10,
+      perHours: 2,
       requiresShade: true,
       requiresWater: true,
       source: 'WA WAC 296-62-095 Table 2 (90–99°F)',
     };
   }
 
-  // 100°F+: Table 2 high-heat cadence
+  // 100°F+: Table 2 high-heat cadence — 15 min rest every 1 hour
   const cadence = WA_TABLE_2_COOLDOWN_CADENCE_100F_PLUS.value as string;
   return {
     tempF,
     coolDownRequired: true,
     cadence,
-    minutesPerHour: 15, // 15 min rest per 1 hour
+    restMinutes: 15,
+    perHours: 1,
     requiresShade: true,
     requiresWater: true,
     source: 'WA WAC 296-62-095 Table 2 (100°F+)',

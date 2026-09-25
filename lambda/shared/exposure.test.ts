@@ -17,10 +17,13 @@ describe('heatIndex()', () => {
     expect(heatIndex(75, 80)).toBe(75);
   });
 
-  it('calculates heat index for normal conditions', () => {
+  it('calculates heat index for normal conditions (95°F, 50% RH)', () => {
     const hi = heatIndex(95, 50);
     expect(hi).toBeGreaterThan(95);
-    expect(hi).toBeGreaterThan(100); // Heat index > ambient at 95°F, 50% RH
+    // NWS Rothfusz reference: 95°F, 50% RH yields approximately 105.2°F
+    // Test anchored to actual formula output (±1°F tolerance for precision)
+    expect(hi).toBeGreaterThanOrEqual(104.2);
+    expect(hi).toBeLessThanOrEqual(106.2);
   });
 
   it('increases with higher humidity', () => {
@@ -123,7 +126,8 @@ describe('coolDownCadence()', () => {
     const result = coolDownCadence(75);
     expect(result.coolDownRequired).toBe(false);
     expect(result.cadence).toBeNull();
-    expect(result.minutesPerHour).toBeNull();
+    expect(result.restMinutes).toBeNull();
+    expect(result.perHours).toBeNull();
   });
 
   it('requires action at 80°F (action level)', () => {
@@ -137,21 +141,52 @@ describe('coolDownCadence()', () => {
     const result = coolDownCadence(85);
     expect(result.coolDownRequired).toBe(true);
     expect(result.cadence).toContain('Preventative');
-    expect(result.minutesPerHour).toBeNull();
+    expect(result.restMinutes).toBeNull();
+    expect(result.perHours).toBeNull();
   });
 
-  it('applies Table 2 cadence at 90–99°F (10 min per 2 hours)', () => {
+  it('applies Table 2 cadence at 90–99°F (10 min rest every 2 hours)', () => {
     const result = coolDownCadence(95);
     expect(result.coolDownRequired).toBe(true);
     expect(result.cadence).toContain('10 min');
-    expect(result.minutesPerHour).toBe(10);
+    expect(result.restMinutes).toBe(10);
+    expect(result.perHours).toBe(2);
   });
 
-  it('applies Table 2 cadence at 100°F+ (15 min per 1 hour)', () => {
+  it('applies Table 2 cadence at 100°F+ (15 min rest every 1 hour)', () => {
     const result = coolDownCadence(105);
     expect(result.coolDownRequired).toBe(true);
     expect(result.cadence).toContain('15 min');
-    expect(result.minutesPerHour).toBe(15);
+    expect(result.restMinutes).toBe(15);
+    expect(result.perHours).toBe(1);
+  });
+
+  it('pins exact WA Table 2 thresholds: 90°F boundary', () => {
+    const result = coolDownCadence(90);
+    expect(result.restMinutes).toBe(10);
+    expect(result.perHours).toBe(2);
+    expect(result.source).toContain('90–99°F');
+  });
+
+  it('pins exact WA Table 2 thresholds: 99°F boundary', () => {
+    const result = coolDownCadence(99);
+    expect(result.restMinutes).toBe(10);
+    expect(result.perHours).toBe(2);
+    expect(result.source).toContain('90–99°F');
+  });
+
+  it('pins exact WA Table 2 thresholds: 100°F boundary (high-heat trigger)', () => {
+    const result = coolDownCadence(100);
+    expect(result.restMinutes).toBe(15);
+    expect(result.perHours).toBe(1);
+    expect(result.source).toContain('100°F+');
+  });
+
+  it('pins exact WA Table 2 thresholds: 105°F', () => {
+    const result = coolDownCadence(105);
+    expect(result.restMinutes).toBe(15);
+    expect(result.perHours).toBe(1);
+    expect(result.source).toContain('100°F+');
   });
 
   it('requires shade and water at all action levels', () => {

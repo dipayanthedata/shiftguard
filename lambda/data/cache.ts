@@ -115,6 +115,7 @@ export interface CachedForecast {
   latitude: number;
   longitude: number;
   forecast: Array<{
+    date: string;
     hour: number;
     tempF: number;
     relativeHumidity: number;
@@ -128,6 +129,7 @@ export async function cacheForecast(
   latitude: number,
   longitude: number,
   forecast: Array<{
+    date: string;
     hour: number;
     tempF: number;
     relativeHumidity: number;

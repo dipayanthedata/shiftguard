@@ -17,7 +17,8 @@ export interface NwsPoint {
 }
 
 export interface NwsHourlyForecast {
-  hour: number; // 0–23
+  date: string; // ISO date YYYY-MM-DD UTC
+  hour: number; // 0–23 UTC
   tempF: number;
   relativeHumidity: number;
   weatherDescription: string;
@@ -87,7 +88,8 @@ export async function getGridPoint(
 export async function getHourlyForecast(
   gridId: string,
   x: number,
-  y: number
+  y: number,
+  startDate: string = new Date().toISOString().split('T')[0] // Default to today UTC
 ): Promise<NwsHourlyForecast[]> {
   const url = `https://api.weather.gov/gridpoints/${gridId}/${x},${y}/forecast/hourly`;
 
@@ -114,10 +116,16 @@ export async function getHourlyForecast(
     };
   };
 
-  // Convert to hourly 0–23 format (API uses sequential number field)
+  // Convert to hourly format with dates
   const periods = data.properties.periods || [];
+  const startDateObj = new Date(startDate + 'T00:00:00Z');
 
   return periods.map((period, index) => {
+    // Calculate date for this hour (starting from startDate + index hours)
+    const hourDate = new Date(startDateObj.getTime() + index * 60 * 60 * 1000);
+    const date = hourDate.toISOString().split('T')[0]; // YYYY-MM-DD UTC
+    const hour = hourDate.getUTCHours();
+
     // Temperature from NWS is in °F when temperatureUnit is 'F'
     const tempF = period.temperature;
 
@@ -132,7 +140,8 @@ export async function getHourlyForecast(
     const windSpeedMph = parseInt(windSpeedStr, 10) || 0;
 
     return {
-      hour: (index % 24) as number, // Wrap to 0–23
+      date,
+      hour,
       tempF,
       relativeHumidity,
       weatherDescription: period.shortForecast,

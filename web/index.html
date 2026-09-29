@@ -3,57 +3,302 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ShiftGuard</title>
+  <title>ShiftGuard — Heat & Smoke Exposure Planner</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div class="container">
     <header>
       <h1>ShiftGuard</h1>
-      <p class="subtitle">Heat & Smoke Exposure Planner</p>
+      <p class="subtitle">Heat & Smoke Exposure Planner for Washington Outdoor Workers</p>
     </header>
 
     <main>
-      <div id="status" class="status loading">
-        <p>Checking system status...</p>
+      <!-- FORM SECTION -->
+      <section class="form-section">
+        <h2>Plan Your Shift</h2>
+        <form id="planForm">
+          <!-- LOCATION -->
+          <fieldset class="fieldset">
+            <legend>Location</legend>
+            <div class="form-row">
+              <label for="cityPreset">Quick Select:</label>
+              <select id="cityPreset">
+                <option value="">Custom coordinates</option>
+                <option value="seattle">Seattle (47.61°N, 122.33°W)</option>
+                <option value="spokane">Spokane (47.66°N, 117.43°W)</option>
+                <option value="yakima">Yakima (46.60°N, 120.51°W)</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label for="latitude">Latitude:</label>
+              <input type="number" id="latitude" name="latitude" step="0.0001" placeholder="e.g., 47.6062" required>
+            </div>
+            <div class="form-row">
+              <label for="longitude">Longitude:</label>
+              <input type="number" id="longitude" name="longitude" step="0.0001" placeholder="e.g., -122.3321" required>
+            </div>
+          </fieldset>
+
+          <!-- SHIFT DETAILS -->
+          <fieldset class="fieldset">
+            <legend>Shift Details</legend>
+            <div class="form-row">
+              <label for="date">Date (YYYY-MM-DD):</label>
+              <input type="date" id="date" name="date" required>
+            </div>
+            <div class="form-row">
+              <label for="startHour">Start Time (hour, 0-23):</label>
+              <input type="number" id="startHour" name="startHour" min="0" max="23" placeholder="e.g., 8" required>
+            </div>
+            <div class="form-row">
+              <label for="endHour">End Time (hour, 0-23):</label>
+              <input type="number" id="endHour" name="endHour" min="0" max="23" placeholder="e.g., 17" required>
+            </div>
+          </fieldset>
+
+          <!-- CREW DETAILS -->
+          <fieldset class="fieldset">
+            <legend>Crew Information</legend>
+            <div class="form-row">
+              <label for="crewSize">Crew Size:</label>
+              <input type="number" id="crewSize" name="crewSize" min="1" placeholder="e.g., 5">
+            </div>
+            <div class="form-row">
+              <label for="workload">Workload (W/m²):</label>
+              <input type="number" id="workload" name="workload" placeholder="e.g., 200 (moderate)" value="200">
+            </div>
+            <div class="form-row checkbox">
+              <input type="checkbox" id="isAcclimatized" name="isAcclimatized">
+              <label for="isAcclimatized" class="checkbox-label">Workers are acclimatized (14+ days heat exposure)</label>
+            </div>
+            <div class="form-row checkbox">
+              <input type="checkbox" id="isNewOrReturning" name="isNewOrReturning" checked>
+              <label for="isNewOrReturning" class="checkbox-label">New or returning worker (< 14 days exposure)</label>
+            </div>
+          </fieldset>
+
+          <button type="submit" class="btn btn-primary">Analyze Shift</button>
+        </form>
+      </section>
+
+      <!-- RESULTS SECTION (hidden until analysis) -->
+      <section id="resultsSection" class="results-section hidden">
+        <!-- AQI AVAILABILITY WARNING -->
+        <div id="aqiWarning" class="alert alert-warning hidden">
+          <strong>⚠️ Air Quality Data Unavailable</strong>
+          <p id="aqiWarningText"></p>
+          <p>Check <strong>WA Ecology Air Quality</strong> or <strong>AirNow (airnow.gov)</strong> directly for current PM2.5 readings.</p>
+        </div>
+
+        <!-- REGULATORY REQUIREMENTS -->
+        <div class="requirements-block regulatory-block">
+          <h2>🔴 REGULATORY REQUIREMENTS (Washington State)</h2>
+          <p class="block-note">These are mandatory under WAC 296-62-095 (heat) and WAC 296-820 (smoke). Non-compliance may result in citations.</p>
+          <ul id="regulatoryList" class="requirements-list"></ul>
+        </div>
+
+        <!-- SHIFTGUARD RECOMMENDATIONS -->
+        <div class="requirements-block recommendations-block">
+          <h2>💡 SHIFTGUARD RECOMMENDATIONS</h2>
+          <p class="block-note">These are best-practice suggestions based on forecast data. Regulatory requirements always take priority.</p>
+          <ul id="recommendationsList" class="requirements-list"></ul>
+        </div>
+
+        <!-- HOURLY ANALYSIS TABLE -->
+        <div class="table-wrapper">
+          <h2>Hourly Forecast Analysis</h2>
+          <table id="hourlyTable" class="hourly-table">
+            <thead>
+              <tr>
+                <th>Hour</th>
+                <th>Temp (°F)</th>
+                <th>Heat Index (°F)</th>
+                <th>Cool-Down</th>
+                <th>Smoke Tier</th>
+              </tr>
+            </thead>
+            <tbody id="hourlyTableBody"></tbody>
+          </table>
+        </div>
+
+        <!-- UNVERIFIED THRESHOLDS -->
+        <div id="unverifiedBlock" class="unverified-block hidden">
+          <h3>⚠️ Unverified Thresholds (Under Review)</h3>
+          <p>The following thresholds are not yet verified against primary regulatory sources. They may change:</p>
+          <ul id="unverifiedList"></ul>
+        </div>
+
+        <!-- METADATA -->
+        <div class="metadata">
+          <p><small>Analysis date: <span id="analysisDate"></span></small></p>
+        </div>
+      </section>
+
+      <!-- ERROR SECTION -->
+      <section id="errorSection" class="error-section hidden">
+        <div class="alert alert-error">
+          <strong>Error</strong>
+          <p id="errorMessage"></p>
+        </div>
+      </section>
+
+      <!-- LOADING INDICATOR -->
+      <div id="loading" class="loading hidden">
+        <p>Analyzing shift...</p>
       </div>
-
-      <section id="response" class="response hidden">
-        <h2>System Status</h2>
-        <pre id="response-body"></pre>
-      </section>
-
-      <section id="error" class="error hidden">
-        <h2>Error</h2>
-        <p id="error-message"></p>
-      </section>
     </main>
 
     <footer>
-      <p>&copy; 2026 ShiftGuard. Hackathon Project.</p>
+      <p>&copy; 2026 ShiftGuard. Heat resilience planning for Washington outdoor workers.</p>
+      <p><small>For emergency heat illness: Call 911. For workplace safety concerns: Contact DOL or WISHA.</small></p>
     </footer>
   </div>
 
   <script>
-    (async () => {
-      try {
-        const response = await fetch('/api/health');
-        const data = await response.json();
+    // ========================================================================
+    // INITIALIZATION
+    // ========================================================================
+    const form = document.getElementById('planForm');
+    const cityPreset = document.getElementById('cityPreset');
+    const latitude = document.getElementById('latitude');
+    const longitude = document.getElementById('longitude');
+    const dateInput = document.getElementById('date');
 
-        document.getElementById('status').classList.add('hidden');
+    // Set default date to today
+    const today = new Date().toISOString().split('T')[0];
+    dateInput.value = today;
 
-        if (response.ok) {
-          document.getElementById('response').classList.remove('hidden');
-          document.getElementById('response-body').textContent = JSON.stringify(data, null, 2);
-        } else {
-          throw new Error(`HTTP ${response.status}: ${data.message || 'Unknown error'}`);
-        }
-      } catch (error) {
-        document.getElementById('status').classList.add('hidden');
-        document.getElementById('error').classList.remove('hidden');
-        document.getElementById('error-message').textContent = error.message;
+    // WA City Presets
+    const cityCoords = {
+      seattle: { lat: 47.6062, lon: -122.3321 },
+      spokane: { lat: 47.6587, lon: -117.4260 },
+      yakima: { lat: 46.6021, lon: -120.5059 },
+    };
+
+    cityPreset.addEventListener('change', (e) => {
+      if (e.target.value && cityCoords[e.target.value]) {
+        latitude.value = cityCoords[e.target.value].lat;
+        longitude.value = cityCoords[e.target.value].lon;
       }
-    })();
+    });
+
+    // ========================================================================
+    // FORM SUBMISSION
+    // ========================================================================
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const payload = {
+        latitude: parseFloat(document.getElementById('latitude').value),
+        longitude: parseFloat(document.getElementById('longitude').value),
+        date: document.getElementById('date').value,
+        startHour: parseInt(document.getElementById('startHour').value),
+        endHour: parseInt(document.getElementById('endHour').value),
+        workloadWm2: parseInt(document.getElementById('workload').value) || 200,
+        isNewOrReturningWorker: document.getElementById('isNewOrReturning').checked,
+        crewSize: parseInt(document.getElementById('crewSize').value) || 1,
+      };
+
+      // Show loading
+      document.getElementById('loading').classList.remove('hidden');
+      document.getElementById('errorSection').classList.add('hidden');
+      document.getElementById('resultsSection').classList.add('hidden');
+
+      try {
+        const response = await fetch('/api/plan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+          throw new Error(`API error: ${response.status}`);
+        }
+
+        const result = await response.json();
+        displayResults(result);
+      } catch (error) {
+        showError(error.message);
+      } finally {
+        document.getElementById('loading').classList.add('hidden');
+      }
+    });
+
+    // ========================================================================
+    // DISPLAY RESULTS
+    // ========================================================================
+    function displayResults(result) {
+      // AQI Availability
+      const aqiWarning = document.getElementById('aqiWarning');
+      if (!result.aqiAvailable) {
+        aqiWarning.classList.remove('hidden');
+        document.getElementById('aqiWarningText').textContent = result.aqiNote || 'Air quality data unavailable.';
+      } else {
+        aqiWarning.classList.add('hidden');
+      }
+
+      // Regulatory Requirements
+      const regList = document.getElementById('regulatoryList');
+      regList.innerHTML = '';
+      (result.regulatoryRequirements || []).forEach((req) => {
+        const li = document.createElement('li');
+        li.textContent = req;
+        regList.appendChild(li);
+      });
+
+      // Recommendations
+      const recList = document.getElementById('recommendationsList');
+      recList.innerHTML = '';
+      (result.shiftGuardRecommendations || []).forEach((rec) => {
+        const li = document.createElement('li');
+        li.textContent = rec;
+        recList.appendChild(li);
+      });
+
+      // Hourly Table
+      const tbody = document.getElementById('hourlyTableBody');
+      tbody.innerHTML = '';
+      (result.hourlyAnalysis || []).forEach((hour) => {
+        const row = document.createElement('tr');
+        const smokeTier = hour.smoke ? `${hour.smoke.category}` : 'N/A';
+        const smokeTierClass = hour.smoke ? `smoke-${hour.smoke.category}` : '';
+        row.innerHTML = `
+          <td class="cell-hour">${hour.hour}:00</td>
+          <td>${hour.tempF}°</td>
+          <td>${hour.heatIndexF}°</td>
+          <td>${hour.coolDown?.cadence || '—'}</td>
+          <td class="cell-smoke ${smokeTierClass}">${smokeTier}</td>
+        `;
+        tbody.appendChild(row);
+      });
+
+      // Unverified Thresholds
+      const unverifiedBlock = document.getElementById('unverifiedBlock');
+      const unverifiedList = document.getElementById('unverifiedList');
+      if (result.unverifiedThresholds && result.unverifiedThresholds.length > 0) {
+        unverifiedBlock.classList.remove('hidden');
+        unverifiedList.innerHTML = '';
+        result.unverifiedThresholds.forEach((threshold) => {
+          const li = document.createElement('li');
+          li.textContent = threshold;
+          unverifiedList.appendChild(li);
+        });
+      } else {
+        unverifiedBlock.classList.add('hidden');
+      }
+
+      // Metadata
+      document.getElementById('analysisDate').textContent = new Date().toLocaleString();
+
+      // Show results
+      document.getElementById('resultsSection').classList.remove('hidden');
+    }
+
+    function showError(message) {
+      document.getElementById('errorMessage').textContent = message;
+      document.getElementById('errorSection').classList.remove('hidden');
+    }
   </script>
 </body>
 </html>

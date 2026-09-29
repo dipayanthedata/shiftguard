@@ -3,8 +3,10 @@
 
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { getForecastForLocation } from '../data/nws';
-import { getPm25WithFallback } from '../data/aqi';
+import { getPm25 } from '../data/aqi';
 import { planShift, HourlyForecast, ShiftWindow } from '../shared/exposure';
+import { narrateShift } from '../narrate/handler';
+import { recordPlan, getImpactMetrics } from '../data/impact';
 
 const CORS_HEADERS = {
   'Content-Type': 'application/json',
@@ -22,8 +24,10 @@ interface PlanRequest {
   longitude: number;
   startHour: number; // 0–23
   endHour: number; // 0–23
+  date: string; // ISO date YYYY-MM-DD; defaults to today if not provided
   workloadWm2?: number; // Metabolic rate W/m²; default 200 (moderate)
   isNewOrReturningWorker?: boolean; // Default false (assume acclimated)
+  crewSize?: number; // Number of workers; default 1 (for impact counter)
 }
 
 function validateRequest(body: unknown): PlanRequest | null {
@@ -47,9 +51,11 @@ function validateRequest(body: unknown): PlanRequest | null {
     longitude: req.longitude,
     startHour: Math.max(0, Math.min(23, Math.floor(req.startHour))),
     endHour: Math.max(0, Math.min(23, Math.floor(req.endHour))),
+    date: typeof req.date === 'string' ? req.date : new Date().toISOString().split('T')[0], // Default to today UTC
     workloadWm2: typeof req.workloadWm2 === 'number' ? req.workloadWm2 : 200,
     isNewOrReturningWorker:
       typeof req.isNewOrReturningWorker === 'boolean' ? req.isNewOrReturningWorker : false,
+    crewSize: typeof req.crewSize === 'number' ? Math.max(1, Math.floor(req.crewSize)) : 1,
   };
 }
 
@@ -109,32 +115,62 @@ export async function handler(
     const nwsForecast = await getForecastForLocation(planRequest.latitude, planRequest.longitude);
 
     // Fetch AQI data
-    console.log('[plan] Fetching AQI data...');
-    const aqiData = await getPm25WithFallback(planRequest.latitude, planRequest.longitude);
+    console.log('[plan] Fetching AQI data (attempt 1)...');
+    const aqiData = await getPm25(planRequest.latitude, planRequest.longitude);
+    const aqiAvailable = aqiData !== null;
+    const pm25Source = aqiData?.pm25Source || null;
 
-    // Merge AQI into hourly forecast
+    if (!aqiAvailable) {
+      console.warn('[plan] Air quality data unavailable; smoke requirements omitted');
+    } else if (pm25Source === 'derived_from_aqi') {
+      console.log('[plan] PM2.5 derived from AQI (not direct measurement)');
+    }
+
+    // Merge AQI into hourly forecast (pm25 may be undefined)
     const hourlyForecast: HourlyForecast[] = nwsForecast.map((h) => ({
       ...h,
-      pm25: aqiData.pm25Ug,
+      pm25: aqiData?.pm25Ug,
     }));
 
     // Generate shift plan
     console.log('[plan] Generating shift plan...');
     const shiftWindow: ShiftWindow = {
-      startHour: planRequest.startHour,
-      endHour: planRequest.endHour,
+      date: planRequest!.date,
+      startHour: planRequest!.startHour,
+      endHour: planRequest!.endHour,
       jurisdiction: 'washington-state', // v1: WA only
-      isNewOrReturningWorker: planRequest.isNewOrReturningWorker || false,
+      isNewOrReturningWorker: planRequest!.isNewOrReturningWorker || false,
     };
 
     const plan = planShift(hourlyForecast, shiftWindow);
 
-    console.log(`[plan] Success: ${plan.hourlyAnalysis.length} hours analyzed`);
+    console.log(`[plan] Success: ${plan.hourlyAnalysis.length} hours analyzed (aqiAvailable=${aqiAvailable})`);
+
+    // Generate narration (English and Spanish)
+    console.log('[plan] Generating narration...');
+    const narration = await narrateShift(plan as unknown as Record<string, unknown>);
+
+    // Record impact metrics
+    const shiftHours = planRequest!.endHour - planRequest!.startHour;
+    const impact = await recordPlan(planRequest!.crewSize || 1, shiftHours);
+    const metrics = await getImpactMetrics();
 
     return {
       statusCode: 200,
       headers: CORS_HEADERS,
-      body: JSON.stringify(plan),
+      body: JSON.stringify({
+        ...plan,
+        aqiAvailable,
+        pm25Source,
+        pm25SourceNote: pm25Source === 'derived_from_aqi' ? 'PM2.5 concentration derived from EPA NowCast AQI (not direct measurement)' : undefined,
+        aqiNote: !aqiAvailable ? 'Air quality data unavailable. Check WA Ecology AirNow (airnow.gov) directly.' : undefined,
+        narration,
+        impact: {
+          plansGenerated: metrics.plansGenerated,
+          crewHoursCovered: metrics.crewHoursCovered,
+          lastUpdatedUtc: metrics.lastUpdatedUtc,
+        },
+      }),
     };
   } catch (error) {
     console.error('[plan] Error:', error);

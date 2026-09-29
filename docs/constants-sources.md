@@ -152,6 +152,14 @@ Most heat illnesses and fatalities occur in the first 1–2 days of heat exposur
 - EPA AQI Technical Document: https://www.epa.gov/air-quality/air-quality-index-aqi
 - NAAQS reference: https://www.epa.gov/air-quality/national-ambient-air-quality-standards-naaqs-pm25
 
+**Design Note: WAC 296-820 & NowCast AQI Consistency**
+
+Washington WAC 296-820 (wildfire smoke exposure rule) requires monitoring of EPA NowCast AQI for PM2.5. AirNow's observation endpoint returns NowCast AQI directly, eliminating a source of data interpretation variance. When AirNow's API response includes only AQI (not direct Concentration measurement), ShiftGuard derives PM2.5 concentration using piecewise linear inversion against EPA AQI breakpoints. This derivation is consistent with how WAC 296-820 expects exposure determination to occur — the regulation itself uses NowCast AQI as the primary safety trigger, not direct concentration measurement. The supervisor sees `pm25Source: "derived_from_aqi"` in the briefing, confirming the data's provenance.
+
+**References:**
+- Washington WAC 296-820: https://app.leg.wa.gov/wac/default.aspx?cite=296-820
+- EPA NowCast AQI definition: https://www.epa.gov/air-quality/air-quality-index-nowcast
+
 ---
 
 ## 5. Water Intake Cadence

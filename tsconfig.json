@@ -15,5 +15,5 @@
     "sourceMap": false
   },
   "include": ["lib/**/*.ts", "bin/**/*.ts", "lambda/**/*.ts"],
-  "exclude": ["node_modules", "cdk.out"]
+  "exclude": ["node_modules", "cdk.out", "**/*.test.ts"]
 }

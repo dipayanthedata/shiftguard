@@ -257,12 +257,13 @@ describe('smokeRequirements()', () => {
 describe('planShift()', () => {
   it('produces hourly analysis for each hour in shift window', () => {
     const forecast = [
-      { hour: 8, tempF: 75, relativeHumidity: 50, pm25: 10 },
-      { hour: 9, tempF: 85, relativeHumidity: 55, pm25: 20 },
-      { hour: 10, tempF: 95, relativeHumidity: 60, pm25: 30 },
+      { date: '2026-09-28', hour: 8, tempF: 75, relativeHumidity: 50, pm25: 10 },
+      { date: '2026-09-28', hour: 9, tempF: 85, relativeHumidity: 55, pm25: 20 },
+      { date: '2026-09-28', hour: 10, tempF: 95, relativeHumidity: 60, pm25: 30 },
     ];
 
     const shift = {
+      date: '2026-09-28',
       startHour: 8,
       endHour: 11,
       jurisdiction: 'washington-state' as const,
@@ -273,9 +274,36 @@ describe('planShift()', () => {
     expect(plan.hourlyAnalysis).toHaveLength(3);
   });
 
-  it('includes WA-specific regulatory requirements', () => {
-    const forecast = [{ hour: 10, tempF: 85, relativeHumidity: 50, pm25: 10 }];
+  it('filters by date to avoid multi-day cross-matching', () => {
+    // Simulate 6.5 days of hourly forecast (typical NWS response)
+    const forecast = Array.from({ length: 156 }, (_, i) => {
+      const date = i < 24 ? '2026-09-28' : i < 48 ? '2026-09-29' : '2026-09-30';
+      const hour = i % 24;
+      return { date, hour, tempF: 70 + hour, relativeHumidity: 50 };
+    });
+
     const shift = {
+      date: '2026-09-28',
+      startHour: 8,
+      endHour: 17,
+      jurisdiction: 'washington-state' as const,
+      isNewOrReturningWorker: false,
+    };
+
+    const plan = planShift(forecast, shift);
+    // 8-17 window = 9 hours (8, 9, 10, 11, 12, 13, 14, 15, 16)
+    expect(plan.hourlyAnalysis).toHaveLength(9);
+    // Verify all are from the same date
+    plan.hourlyAnalysis.forEach((h) => {
+      expect(h.hour).toBeGreaterThanOrEqual(8);
+      expect(h.hour).toBeLessThan(17);
+    });
+  });
+
+  it('includes WA-specific regulatory requirements', () => {
+    const forecast = [{ date: '2026-09-28', hour: 10, tempF: 85, relativeHumidity: 50, pm25: 10 }];
+    const shift = {
+      date: '2026-09-28',
       startHour: 10,
       endHour: 11,
       jurisdiction: 'washington-state' as const,
@@ -288,8 +316,9 @@ describe('planShift()', () => {
   });
 
   it('flags new/returning worker acclimatization requirement', () => {
-    const forecast = [{ hour: 10, tempF: 85, relativeHumidity: 50, pm25: 10 }];
+    const forecast = [{ date: '2026-09-28', hour: 10, tempF: 85, relativeHumidity: 50, pm25: 10 }];
     const shift = {
+      date: '2026-09-28',
       startHour: 10,
       endHour: 11,
       jurisdiction: 'washington-state' as const,
@@ -301,8 +330,9 @@ describe('planShift()', () => {
   });
 
   it('includes unverified thresholds in output', () => {
-    const forecast = [{ hour: 10, tempF: 85, relativeHumidity: 50, pm25: 10 }];
+    const forecast = [{ date: '2026-09-28', hour: 10, tempF: 85, relativeHumidity: 50, pm25: 10 }];
     const shift = {
+      date: '2026-09-28',
       startHour: 10,
       endHour: 11,
       jurisdiction: 'washington-state' as const,
@@ -316,8 +346,9 @@ describe('planShift()', () => {
   });
 
   it('distinguishes REGULATORY from SHIFTGUARD RECOMMENDATION in output', () => {
-    const forecast = [{ hour: 10, tempF: 95, relativeHumidity: 50, pm25: 10 }];
+    const forecast = [{ date: '2026-09-28', hour: 10, tempF: 95, relativeHumidity: 50, pm25: 10 }];
     const shift = {
+      date: '2026-09-28',
       startHour: 10,
       endHour: 11,
       jurisdiction: 'washington-state' as const,
@@ -333,11 +364,12 @@ describe('planShift()', () => {
 
   it('reports peak heat and smoke conditions', () => {
     const forecast = [
-      { hour: 8, tempF: 80, relativeHumidity: 50, pm25: 10 },
-      { hour: 9, tempF: 105, relativeHumidity: 60, pm25: 50 },
+      { date: '2026-09-28', hour: 8, tempF: 80, relativeHumidity: 50, pm25: 10 },
+      { date: '2026-09-28', hour: 9, tempF: 105, relativeHumidity: 60, pm25: 50 },
     ];
 
     const shift = {
+      date: '2026-09-28',
       startHour: 8,
       endHour: 10,
       jurisdiction: 'washington-state' as const,
@@ -347,5 +379,30 @@ describe('planShift()', () => {
     const plan = planShift(forecast, shift);
     expect(plan.shiftGuardRecommendations.some((r) => r.includes('105'))).toBe(true);
     expect(plan.shiftGuardRecommendations.some((r) => r.includes('50'))).toBe(true);
+  });
+
+  it('omits smoke requirements when AQI data unavailable (pm25 undefined)', () => {
+    const forecast = [
+      { date: '2026-09-28', hour: 8, tempF: 85, relativeHumidity: 50 }, // No pm25
+      { date: '2026-09-28', hour: 9, tempF: 95, relativeHumidity: 60 }, // No pm25
+    ];
+
+    const shift = {
+      date: '2026-09-28',
+      startHour: 8,
+      endHour: 10,
+      jurisdiction: 'washington-state' as const,
+      isNewOrReturningWorker: false,
+    };
+
+    const plan = planShift(forecast, shift);
+    // Verify hourly analysis has no smoke, aqi, or pm25
+    expect(plan.hourlyAnalysis[0].smoke).toBeUndefined();
+    expect(plan.hourlyAnalysis[0].aqi).toBeUndefined();
+    expect(plan.hourlyAnalysis[0].pm25).toBeUndefined();
+    // Verify regulatory requirements do not include smoke clause
+    expect(plan.regulatoryRequirements.some((r) => r.includes('Wildfire smoke'))).toBe(false);
+    // Heat requirements still present
+    expect(plan.regulatoryRequirements.some((r) => r.includes('1 quart'))).toBe(true);
   });
 });

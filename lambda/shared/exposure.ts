@@ -282,15 +282,17 @@ export function smokeRequirements(pm25: number): SmokeRequirements {
 // ============================================================================
 
 export interface HourlyForecast {
+  date: string; // ISO date YYYY-MM-DD (UTC)
   hour: number;
   tempF: number;
   relativeHumidity: number;
-  pm25: number;
+  pm25?: number; // Optional: undefined when AQI data unavailable
 }
 
 export interface ShiftWindow {
-  startHour: number;
-  endHour: number;
+  date: string; // ISO date YYYY-MM-DD for shift analysis
+  startHour: number; // 0–23
+  endHour: number; // 0–23
   jurisdiction: 'washington-state' | 'federal-osha';
   isNewOrReturningWorker: boolean;
 }
@@ -299,10 +301,10 @@ export interface HourlyAnalysis {
   hour: number;
   tempF: number;
   heatIndexF: number;
-  pm25: number;
-  aqi: AqiClassification;
+  pm25?: number; // Undefined when AQI unavailable
+  aqi?: AqiClassification; // Undefined when AQI unavailable
   coolDown: CoolDownCadence;
-  smoke: SmokeRequirements;
+  smoke?: SmokeRequirements; // Undefined when AQI unavailable
 }
 
 export interface ShiftPlan {
@@ -316,16 +318,24 @@ export interface ShiftPlan {
 
 export function planShift(hourlyForecast: HourlyForecast[], shift: ShiftWindow): ShiftPlan {
   const analysis = hourlyForecast
-    .filter((h) => h.hour >= shift.startHour && h.hour < shift.endHour)
-    .map((h) => ({
-      hour: h.hour,
-      tempF: Math.round(h.tempF * 10) / 10,
-      heatIndexF: Math.round(heatIndex(h.tempF, h.relativeHumidity) * 10) / 10,
-      pm25: Math.round(h.pm25 * 10) / 10,
-      aqi: classifyAqi(h.pm25),
-      coolDown: coolDownCadence(h.tempF),
-      smoke: smokeRequirements(h.pm25),
-    }));
+    .filter((h) => h.date === shift.date && h.hour >= shift.startHour && h.hour < shift.endHour)
+    .map((h) => {
+      const hourData: HourlyAnalysis = {
+        hour: h.hour,
+        tempF: Math.round(h.tempF * 10) / 10,
+        heatIndexF: Math.round(heatIndex(h.tempF, h.relativeHumidity) * 10) / 10,
+        coolDown: coolDownCadence(h.tempF),
+      };
+
+      // Only compute AQI and smoke if pm25 is available
+      if (h.pm25 !== undefined) {
+        hourData.pm25 = Math.round(h.pm25 * 10) / 10;
+        hourData.aqi = classifyAqi(h.pm25);
+        hourData.smoke = smokeRequirements(h.pm25);
+      }
+
+      return hourData;
+    });
 
   // Always-applicable regulatory requirements
   const regulatoryRequirements: string[] = [];
@@ -342,8 +352,8 @@ export function planShift(hourlyForecast: HourlyForecast[], shift: ShiftWindow):
     const incidentalExemption = (WA_INCIDENTAL_EXPOSURE_EXEMPTION_MINUTES.value as number);
     regulatoryRequirements.push(`REGULATORY: Incidental exposure exemption: if heat exposure ≤${incidentalExemption} minutes in any 60-minute period, rule does not apply.`);
 
-    // Add smoke requirements if relevant
-    const hasSmoke = analysis.some((h) => h.pm25 >= 20.5);
+    // Add smoke requirements only if AQI data is available
+    const hasSmoke = analysis.some((h) => h.pm25 !== undefined && h.pm25 >= 20.5);
     if (hasSmoke) {
       regulatoryRequirements.push('REGULATORY: Wildfire smoke (PM2.5 ≥20.5 µg/m³): employer must have training, response plan, and provide N95s as required by tier.');
     }
@@ -359,9 +369,13 @@ export function planShift(hourlyForecast: HourlyForecast[], shift: ShiftWindow):
     shiftGuardRecommendations.push(`SHIFTGUARD RECOMMENDATION: Peak ambient temperature ${peakTemp}°F. Monitor workers frequently for heat illness symptoms. Ensure first-aid responders are on-site.`);
   }
 
-  const peakPm25 = analysis.reduce((max, h) => (h.pm25 > max ? h.pm25 : max), 0);
+  const peakPm25 = analysis.reduce((max, h) => {
+    if (h.pm25 !== undefined && h.pm25 > max) return h.pm25;
+    return max;
+  }, 0);
   if (peakPm25 >= 35.5) {
-    shiftGuardRecommendations.push(`SHIFTGUARD RECOMMENDATION: Peak PM2.5 ${peakPm25} µg/m³ (AQI ${analysis.find((h) => h.pm25 === peakPm25)?.aqi.aqi}). If outdoors during peak smoke, consider shorter shifts or evacuation to cleaner air.`);
+    const hourWithPeak = analysis.find((h) => h.pm25 === peakPm25);
+    shiftGuardRecommendations.push(`SHIFTGUARD RECOMMENDATION: Peak PM2.5 ${peakPm25} µg/m³ (AQI ${hourWithPeak?.aqi?.aqi}). If outdoors during peak smoke, consider shorter shifts or evacuation to cleaner air.`);
   }
 
   shiftGuardRecommendations.push('SHIFTGUARD RECOMMENDATION: Heat index and smoke are reported for context. Primary decision-making uses ambient temperature (WA rule) and PM2.5 µg/m³ (smoke rule).');

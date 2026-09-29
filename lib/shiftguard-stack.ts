@@ -1,12 +1,16 @@
 import * as cdk from 'aws-cdk-lib';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as budgets from 'aws-cdk-lib/aws-budgets';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as custom from 'aws-cdk-lib/custom-resources';
 import { Construct } from 'constructs';
+import * as path from 'path';
 
 export class ShiftGuardStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -53,23 +57,84 @@ exports.handler = async (event) => {
       authType: lambda.FunctionUrlAuthType.NONE,
     });
 
+    // Create explicit execution role for Plan Lambda with all needed permissions
+    const planHandlerRole = new iam.Role(this, 'PlanHandlerRole', {
+      assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
+    });
+
+    // Lambda logs
+    planHandlerRole.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicExecutionRole')
+    );
+
+    // DynamoDB read/write (will be granted separately)
+    planHandlerRole.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:Query'],
+        resources: [`arn:aws:dynamodb:${this.region}:${account}:table/shiftguard-data`],
+      })
+    );
+
+    // SSM GetParameter for AirNow API key
+    planHandlerRole.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['ssm:GetParameter'],
+        resources: [`arn:aws:ssm:${this.region}:${account}:parameter/shiftguard/*`],
+      })
+    );
+
+    // KMS Decrypt for SSM SecureString
+    planHandlerRole.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['kms:Decrypt'],
+        resources: [`arn:aws:kms:${this.region}:${account}:key/*`],
+        conditions: {
+          StringEquals: {
+            'kms:ViaService': `ssm.${this.region}.amazonaws.com`,
+          },
+        },
+      })
+    );
+
+    // Bedrock InvokeModel for narration (Claude Haiku 4.5 inference profile + all routed regions)
+    // Inference profile routes to us-east-1, us-east-2, us-west-2; must grant foundation-model access in all
+    planHandlerRole.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['bedrock:InvokeModel'],
+        resources: [
+          `arn:aws:bedrock:${this.region}:${account}:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0`,
+          'arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0',
+          'arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0',
+          'arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0',
+        ],
+      })
+    );
+
     // Lambda for POST /api/plan endpoint
-    const planHandler = new lambda.Function(this, 'PlanHandler', {
+    const planHandler = new nodejs.NodejsFunction(this, 'PlanHandler', {
+      entry: 'lambda/plan/handler.ts',
+      handler: 'handler',
       runtime: lambda.Runtime.NODEJS_20_X,
-      handler: 'plan/handler.handler',
-      code: lambda.Code.fromAsset('.'),
-      memorySize: 512, // More memory for data fetching
-      timeout: cdk.Duration.seconds(60), // Longer timeout for API calls
+      memorySize: 512,
+      timeout: cdk.Duration.seconds(60),
       environment: {
         DYNAMODB_TABLE_NAME: 'shiftguard-data',
-        AWS_REGION: this.region,
+        BEDROCK_MODEL_ID: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
       },
+      bundling: {
+        externalModules: ['@aws-sdk'],
+      },
+      role: planHandlerRole,
     });
 
     const planFunctionUrl = planHandler.addFunctionUrl({
       cors: {
         allowedOrigins: ['*'],
-        allowedMethods: [lambda.HttpMethod.POST, lambda.HttpMethod.OPTIONS],
+        allowedMethods: [lambda.HttpMethod.POST],
         allowedHeaders: ['Content-Type'],
       },
       authType: lambda.FunctionUrlAuthType.NONE,
@@ -136,6 +201,36 @@ exports.handler = async (event) => {
         },
       })
     );
+
+    // Deploy web files and invalidate CloudFront cache
+    const deployment = new s3deploy.BucketDeployment(this, 'WebDeployment', {
+      sources: [s3deploy.Source.asset(path.join(__dirname, '../web'))],
+      destinationBucket: bucket,
+      distribution,
+      distributionPaths: ['/*'],
+    });
+
+    // Invalidate CloudFront cache on deployment
+    new custom.AwsCustomResource(this, 'InvalidateCloudFront', {
+      onUpdate: {
+        action: 'createInvalidation',
+        service: 'CloudFront',
+        parameters: {
+          DistributionId: distribution.distributionId,
+          InvalidationBatch: {
+            Paths: {
+              Quantity: 1,
+              Items: ['/*'],
+            },
+            CallerReference: cdk.Fn.select(0, cdk.Fn.split(':', cdk.Fn.ref('AWS::StackId'))),
+          },
+        },
+        physicalResourceId: custom.PhysicalResourceId.of('CloudFrontInvalidation'),
+      },
+      policy: custom.AwsCustomResourcePolicy.fromSdkCalls({
+        resources: [`arn:aws:cloudfront::${account}:distribution/${distribution.distributionId}`],
+      }),
+    });
 
     // Grant plan Lambda permissions to read/write DynamoDB cache
     table.grantReadWriteData(planHandler);
